@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import WebSocket from "ws";
 import type { ClientMessage, ServerMessage } from "../src/online/protocol.js";
 import type { OnlineGame } from "../src/online/game.js";
-import { Hub, type Conn } from "./hub.js";
+import { Hub, type Conn } from "../src/online/hub.js";
 import { startServer } from "./index.js";
 
 type Outgoing = ClientMessage extends infer M ? (M extends { id: number } ? Omit<M, "id"> : never) : never;

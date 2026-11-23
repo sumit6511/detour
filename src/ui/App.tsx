@@ -8,6 +8,8 @@ import { Game } from "./screens/Game";
 import { HowToPlay } from "./screens/HowToPlay";
 import { EMPTY_ENTRY, Menu, onlineRecordKey, recordKey, type RaceRecord } from "./screens/Menu";
 import { OnlineScreen } from "./screens/Online";
+import { NearbyJoin } from "./screens/NearbyLazy";
+import { hadNearbyHost, isNearbyHost } from "../nearby/registry";
 import type { OnlineSession } from "../online/backend";
 import { onlineBackend } from "../online/select";
 import { SettingsDialog } from "./screens/SettingsDialog";
@@ -34,6 +36,16 @@ function codeFromHash(): string | null {
   }
 }
 
+/** A nearby invite (or a reply meant for the host) lands here as #nearby-<pairing code>. */
+function nearbyFromHash(): string | null {
+  try {
+    const m = /^#nearby-(\S+)$/.exec(location.hash);
+    return m ? m[1]! : null;
+  } catch {
+    return null;
+  }
+}
+
 function clearHash() {
   try {
     history.replaceState(null, "", location.pathname + location.search);
@@ -55,12 +67,19 @@ const isOptions = (v: unknown): boolean => {
   return (
     !!o &&
     (o.size === 7 || o.size === 9) &&
-    (o.mode === "bot" || o.mode === "friend" || o.mode === "online") &&
+    (o.mode === "bot" || o.mode === "friend" || o.mode === "online" || o.mode === "nearby") &&
     (o.level === "easy" || o.level === "medium" || o.level === "hard") &&
     typeof o.roadworks === "boolean" &&
     (o.clock === undefined || isClockPreset(o.clock))
   );
 };
+
+/** Remember an online seat for a reload; nearby guests can't resume that way, so they're skipped. */
+function remember(session: OnlineSession) {
+  if (session.backend.kind !== "nearby") save(KEYS.online, { code: session.code });
+  else if (isNearbyHost(session.backend)) save(KEYS.online, { code: session.code, nearby: true });
+  else remove(KEYS.online);
+}
 
 /** A saved race the player can pick back up: well-formed and not finished yet. */
 const resumable = (match: Match | null) => (match && !winnerOf(match) ? match : null);
@@ -68,6 +87,7 @@ const resumable = (match: Match | null) => (match && !winnerOf(match) ? match : 
 export function App() {
   const [settings, setSettings] = useState<Settings>(() => load(KEYS.settings, DEFAULT_SETTINGS, isSettings));
   const [joinCode, setJoinCode] = useState(codeFromHash);
+  const [nearbyCode, setNearbyCode] = useState(nearbyFromHash);
   const [options, setOptions] = useState<MatchOptions>(() => {
     const saved = load(KEYS.options, DEFAULT_OPTIONS, isOptions);
     return joinCode ? { ...saved, mode: "online" } : saved;
@@ -75,8 +95,8 @@ export function App() {
   const [match, setMatch] = useState<Match | null>(() => load<Match | null>(KEYS.match, null, isMatch));
   const [record, setRecord] = useState<RaceRecord>(() => load(KEYS.record, {}));
   // Open straight into a race that was left unfinished; otherwise start at the menu.
-  const [screen, setScreen] = useState<"menu" | "game" | "online">(() =>
-    resumable(match) && !joinCode ? "game" : "menu",
+  const [screen, setScreen] = useState<"menu" | "game" | "online" | "nearby">(() =>
+    nearbyCode ? "nearby" : resumable(match) && !joinCode ? "game" : "menu",
   );
   const [online, setOnline] = useState<OnlineSession | null>(null);
   const [helpOpen, setHelpOpen] = useState(false);
@@ -126,6 +146,12 @@ export function App() {
   // An invite link opened in a tab that already has the game: switch to joining it.
   useEffect(() => {
     const onHash = () => {
+      const pairing = nearbyFromHash();
+      if (pairing) {
+        setNearbyCode(pairing);
+        setScreen("nearby");
+        return;
+      }
       const code = codeFromHash();
       if (!code) return;
       setJoinCode(code);
@@ -136,14 +162,20 @@ export function App() {
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
 
-  // Back into an online race that was in progress before a reload.
+  // Back into an online race that was in progress before a reload. (A nearby race only comes
+  // back on the host, whose tab is the referee; a guest pairs again instead.)
   useEffect(() => {
-    const saved = load<{ code: string } | null>(KEYS.online, null);
-    if (!saved || joinCode) return;
+    const saved = load<{ code: string; nearby?: boolean } | null>(KEYS.online, null);
+    if (!saved || joinCode || nearbyCode) return;
     let live = true;
-    void onlineBackend().then(async (choice) => {
-      if (!choice.backend) return;
-      const session = await choice.backend.resume(saved.code).catch(() => null);
+    const backend = saved.nearby
+      ? hadNearbyHost()
+        ? import("../nearby/link").then((m) => m.nearbyHost().backend)
+        : Promise.resolve(null)
+      : onlineBackend().then((choice) => choice.backend);
+    void backend.then(async (backend) => {
+      if (!backend) return remove(KEYS.online);
+      const session = await backend.resume(saved.code).catch(() => null);
       if (!live || !session) return;
       if (session.game().status === "finished") {
         session.leave();
@@ -156,12 +188,15 @@ export function App() {
     return () => {
       live = false;
     };
-  }, [joinCode]);
+    // Only on first load: later changes to the codes are handled where they happen.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const enterOnline = useCallback((session: OnlineSession) => {
     setOnline(session);
-    save(KEYS.online, { code: session.code });
+    remember(session);
     setScreen("online");
+    setNearbyCode(null);
     clearHash();
   }, []);
 
@@ -179,7 +214,7 @@ export function App() {
       if (current && current !== next) current.leave();
       return next;
     });
-    save(KEYS.online, { code: next.code });
+    remember(next);
   }, []);
 
   // Count each finished online race once in the record.
@@ -237,9 +272,11 @@ export function App() {
             key={
               screen === "online" && online
                 ? `online-${online.code}`
-                : screen === "game" && match
-                  ? `game-${match.setup.seed}`
-                  : "menu"
+                : screen === "nearby" && nearbyCode
+                  ? `nearby-${nearbyCode}`
+                  : screen === "game" && match
+                    ? `game-${match.setup.seed}`
+                    : "menu"
             }
             className="screen"
             initial={{ opacity: 0, y: 14 }}
@@ -257,6 +294,17 @@ export function App() {
                 onExit={exitOnline}
                 onSwitch={switchOnline}
                 onFinished={finishedOnline}
+              />
+            ) : screen === "nearby" && nearbyCode ? (
+              <NearbyJoin
+                code={nearbyCode}
+                onSeated={enterOnline}
+                onCancel={() => {
+                  setNearbyCode(null);
+                  clearHash();
+                  setOptions((o) => ({ ...o, mode: "nearby" }));
+                  setScreen("menu");
+                }}
               />
             ) : screen === "game" && match ? (
               <Game
@@ -280,6 +328,10 @@ export function App() {
                 onHelp={() => setHelpOpen(true)}
                 onOpenSettings={() => setSettingsOpen(true)}
                 onOnline={enterOnline}
+                onNearbyJoin={(code) => {
+                  setNearbyCode(code);
+                  setScreen("nearby");
+                }}
                 joinCode={joinCode}
               />
             )}

@@ -168,3 +168,24 @@ export const DetourArrow = (p: IconProps) => (
     <path d="M4 34V20a8 8 0 0 1 8-8h20V4l14 13-14 13v-8H16a2 2 0 0 0-2 2v10z" fill="currentColor" />
   </svg>
 );
+
+export const IconCamera = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M4 8h3l1.5-2.5h7L17 8h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1Z" />
+    <circle cx="12" cy="13" r="3.5" />
+  </Svg>
+);
+
+export const IconShare = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M12 15V3M8 7l4-4 4 4" />
+    <path d="M7 11H5.5A1.5 1.5 0 0 0 4 12.5v7A1.5 1.5 0 0 0 5.5 21h13a1.5 1.5 0 0 0 1.5-1.5v-7a1.5 1.5 0 0 0-1.5-1.5H17" />
+  </Svg>
+);
+
+export const IconWifi = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M2.5 9a14 14 0 0 1 19 0M5.5 12.5a9.5 9.5 0 0 1 13 0M8.6 16a5 5 0 0 1 6.8 0" />
+    <circle cx="12" cy="19.5" r="0.8" fill="currentColor" />
+  </Svg>
+);

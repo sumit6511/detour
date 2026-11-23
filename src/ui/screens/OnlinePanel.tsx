@@ -7,7 +7,7 @@ import { onlineBackend } from "../../online/select";
 import { IconPlay } from "../icons";
 import { load, save } from "../storage";
 
-const NAME_KEY = "detour:name";
+export const NAME_KEY = "detour:name";
 
 interface OnlinePanelProps {
   options: MatchOptions;

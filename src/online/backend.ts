@@ -41,7 +41,7 @@ export interface OnlineSession {
 export type Readiness = { ok: true } | { ok: false; reason: string };
 
 export interface OnlineBackend {
-  kind: "server" | "claude";
+  kind: "server" | "claude" | "nearby";
   /** Plain words for where games are hosted, shown in the online setup. */
   description: string;
   /** Server games need a typed nickname; Claude pages already know who you are. */

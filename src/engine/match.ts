@@ -14,7 +14,7 @@ import { generateStones } from "./generator.js";
 import { createRng, randInt } from "./rng.js";
 import { clockSetting, remainingFrom, type ClockPreset } from "./clock.js";
 
-export type Mode = "bot" | "friend" | "online";
+export type Mode = "bot" | "friend" | "online" | "nearby";
 export type BoardSize = 7 | 9;
 
 export const WALLS_FOR_SIZE: Record<BoardSize, number> = { 7: 6, 9: 10 };

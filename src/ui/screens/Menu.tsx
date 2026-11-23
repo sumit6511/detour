@@ -20,6 +20,7 @@ import { LEVEL_LABEL, LEVEL_NOTE } from "../labels";
 import type { ClockPreset } from "../../engine/clock";
 import type { OnlineSession } from "../../online/backend";
 import { OnlinePanel } from "./OnlinePanel";
+import { NearbyPanel } from "./NearbyLazy";
 
 export interface RecordEntry {
   wins: number;
@@ -47,6 +48,8 @@ interface MenuProps {
   onHelp: () => void;
   onOpenSettings: () => void;
   onOnline: (session: OnlineSession) => void;
+  /** Open the nearby join screen with a pasted invite. */
+  onNearbyJoin: (code: string) => void;
   joinCode?: string | null;
 }
 
@@ -63,6 +66,7 @@ export function Menu({
   onHelp,
   onOpenSettings,
   onOnline,
+  onNearbyJoin,
   joinCode = null,
 }: MenuProps) {
   const set = <K extends keyof MatchOptions>(key: K, value: MatchOptions[K]) =>
@@ -133,7 +137,7 @@ export function Menu({
             className="card setup"
             onSubmit={(event) => {
               event.preventDefault();
-              if (options.mode !== "online") onStart();
+              if (options.mode === "bot" || options.mode === "friend") onStart();
             }}
           >
             <div className="field">
@@ -147,6 +151,7 @@ export function Menu({
                   { value: "bot", label: "Bot" },
                   { value: "friend", label: "Friend", note: "same screen" },
                   { value: "online", label: "Online", note: "anyone" },
+                  { value: "nearby", label: "Nearby", note: "same Wi-Fi" },
                 ]}
               />
             </div>
@@ -223,6 +228,8 @@ export function Menu({
 
             {options.mode === "online" ? (
               <OnlinePanel options={options} onOnline={onOnline} initialCode={joinCode} />
+            ) : options.mode === "nearby" ? (
+              <NearbyPanel options={options} onOnline={onOnline} onJoin={onNearbyJoin} />
             ) : (
               <button type="submit" className="btn btn--go btn--big">
                 <IconPlay /> {saved ? "Start a new race" : "Start race"}

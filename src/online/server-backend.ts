@@ -54,26 +54,65 @@ export function serverUrl(): string | null {
   return url.toString();
 }
 
+/** The parts of a WebSocket this client uses. Nearby games supply their own over a direct link. */
+export interface SocketLike {
+  /** 1 while open, as with WebSocket.OPEN. */
+  readonly readyState: number;
+  send(text: string): void;
+  close(): void;
+  onopen: (() => void) | null;
+  onmessage: ((event: { data: unknown }) => void) | null;
+  onerror: (() => void) | null;
+  onclose: (() => void) | null;
+}
+
+export interface ServerBackendOptions {
+  kind?: "server" | "nearby";
+  description?: string;
+  /** Opens a fresh connection. Default: a WebSocket to the backend's URL. */
+  openSocket?: () => SocketLike;
+  /** Reconnect by itself after a drop. True for the game server; nearby games re-pair instead. */
+  reconnect?: boolean;
+  /** Who this browser is to the referee. Default: one id per browser, kept in storage. */
+  clientId?: string;
+}
+
+const OPEN = 1;
+
 /**
- * Talks to the Detour game server over one WebSocket, shared by every session. Reconnects on
- * its own with backoff and re-takes each seat with its token, so a dropped connection or a
+ * Talks to a Detour referee over one connection shared by every session: the game server, or in
+ * a nearby race the hub running in the host's tab. Re-takes each seat with its token whenever the
+ * connection comes back (by itself, with backoff, for the server), so a dropped connection or a
  * reload puts the player straight back at the table.
  */
 export class ServerBackend implements OnlineBackend {
-  kind = "server" as const;
+  kind: "server" | "nearby";
   needsName = true;
   description: string;
-  private socket: WebSocket | null = null;
-  private opening: Promise<WebSocket> | null = null;
+  private socket: SocketLike | null = null;
+  private opening: Promise<SocketLike> | null = null;
+  private openSocket: () => SocketLike;
+  readonly reconnects: boolean;
   private nextId = 1;
   private pending = new Map<number, { resolve: (m: ServerMessage) => void; reject: (e: Error) => void }>();
   private sessions = new Map<string, ServerSession>();
+  /** Seat tokens, kept here as well as in storage so a seat survives blocked storage. */
+  private tokens = new Map<string, string>();
   private name = "Player";
   private sentName: string | null = null;
   private retry = 0;
+  private clientId: string | undefined;
 
-  constructor(private url: string) {
-    this.description = `Games are hosted on ${new URL(url.replace(/^ws/, "http")).host}.`;
+  constructor(
+    private url: string,
+    options: ServerBackendOptions = {},
+  ) {
+    this.kind = options.kind ?? "server";
+    this.reconnects = options.reconnect ?? true;
+    this.clientId = options.clientId;
+    this.openSocket = options.openSocket ?? (() => new WebSocket(this.url) as unknown as SocketLike);
+    this.description =
+      options.description ?? `Games are hosted on ${new URL(url.replace(/^ws/, "http")).host}.`;
   }
 
   async readiness(): Promise<Readiness> {
@@ -101,16 +140,18 @@ export class ServerBackend implements OnlineBackend {
   }
 
   async resume(code: string) {
-    const seat = storage<Record<string, { token: string }>>(SEATS_KEY, {})[code];
-    if (!seat) return null;
+    const token =
+      this.tokens.get(code) ?? storage<Record<string, { token: string }>>(SEATS_KEY, {})[code]?.token;
+    if (!token) return null;
     try {
-      return this.seatFrom(await this.request({ t: "resume", code, token: seat.token }));
+      return this.seatFrom(await this.request({ t: "resume", code, token }));
     } catch {
       return null;
     }
   }
 
   inviteLink(code: string) {
+    if (this.kind === "nearby") return null; // nearby players pair by QR code instead
     if (typeof location === "undefined" || !location.protocol.startsWith("http")) return null;
     return `${location.origin}${location.pathname}#join-${code.toLowerCase()}`;
   }
@@ -136,16 +177,18 @@ export class ServerBackend implements OnlineBackend {
     });
   }
 
-  private hello(socket: WebSocket) {
-    socket.send(JSON.stringify({ t: "hello", id: 0, name: this.name, clientId: clientId() }));
+  private hello(socket: SocketLike) {
+    socket.send(
+      JSON.stringify({ t: "hello", id: 0, name: this.name, clientId: this.clientId ?? clientId() }),
+    );
     this.sentName = this.name;
   }
 
-  private connect(): Promise<WebSocket> {
-    if (this.socket?.readyState === WebSocket.OPEN) return Promise.resolve(this.socket);
+  private connect(): Promise<SocketLike> {
+    if (this.socket?.readyState === OPEN) return Promise.resolve(this.socket);
     if (this.opening) return this.opening;
-    this.opening = new Promise<WebSocket>((resolve, reject) => {
-      const socket = new WebSocket(this.url);
+    this.opening = new Promise<SocketLike>((resolve, reject) => {
+      const socket = this.openSocket();
       const timer = setTimeout(() => {
         socket.close();
         reject(new Error("timeout"));
@@ -162,14 +205,20 @@ export class ServerBackend implements OnlineBackend {
       socket.onmessage = (event) => this.receive(JSON.parse(String(event.data)) as ServerMessage);
       socket.onerror = () => {
         clearTimeout(timer);
-        reject(new Error("connection failed"));
+        reject(
+          new Error(
+            this.kind === "nearby"
+              ? "Not linked to the other device right now."
+              : "Can't reach the game server right now.",
+          ),
+        );
       };
       socket.onclose = () => {
         this.socket = null;
         for (const [, p] of this.pending) p.reject(new Error("Lost the connection to the server."));
         this.pending.clear();
         for (const session of this.sessions.values()) session.connection(false);
-        if (this.sessions.size > 0) {
+        if (this.sessions.size > 0 && this.reconnects) {
           const delay = Math.min(10_000, 500 * 2 ** this.retry++);
           setTimeout(() => void this.connect().catch(() => {}), delay);
         }
@@ -185,8 +234,10 @@ export class ServerBackend implements OnlineBackend {
       const waiting = this.pending.get(message.id);
       if (waiting) {
         this.pending.delete(message.id);
-        if (message.t === "error") waiting.reject(new Error(message.message));
-        else waiting.resolve(message);
+        if (message.t === "error") return waiting.reject(new Error(message.message));
+        // Take the seat now, so news that follows straight after (presence) finds its session.
+        if (message.t === "seat") this.trySeat(message);
+        waiting.resolve(message);
         return;
       }
     }
@@ -213,6 +264,7 @@ export class ServerBackend implements OnlineBackend {
     if (message.t !== "seat") throw new Error("Unexpected reply from the server.");
     const game = parseGame(message.game);
     if (!game) throw new Error("The server sent a race this version can't read.");
+    this.tokens.set(message.code, message.token);
     const seats = storage<Record<string, { token: string; at: number }>>(SEATS_KEY, {});
     seats[message.code] = { token: message.token, at: Date.now() };
     // Keep the ten most recent seats.
@@ -230,6 +282,14 @@ export class ServerBackend implements OnlineBackend {
     const session = new ServerSession(this, message as SeatMessage, game);
     this.sessions.set(message.code, session);
     return session;
+  }
+
+  private trySeat(message: ServerMessage) {
+    try {
+      this.seatFrom(message);
+    } catch {
+      // The requester gets the same error when it reads the reply.
+    }
   }
 
   forget(code: string) {
@@ -338,7 +398,8 @@ class ServerSession implements OnlineSession {
     this.switches.emit(next);
   }
   connection(up: boolean) {
-    if (!up) this.presences.emit({ here: null, since: null });
+    // Reconnecting by itself: "can't tell" for a moment. A nearby link that dropped: they're gone.
+    if (!up) this.presences.emit({ here: this.backend.reconnects ? null : false, since: null });
   }
   async reseat() {
     await this.backend.resume(this.code);

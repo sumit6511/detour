@@ -1,11 +1,11 @@
 import { createReadStream, existsSync, statSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server } from "node:http";
+import { networkInterfaces } from "node:os";
 import { extname, join, normalize, resolve } from "node:path";
 import { WebSocketServer, type WebSocket } from "ws";
-import { cleanName } from "../src/online/game.js";
-import { isClockPreset } from "../src/engine/clock.js";
-import type { ClientMessage, ServerMessage } from "../src/online/protocol.js";
-import { Hub, HubError, type Conn } from "./hub.js";
+import type { ServerMessage } from "../src/online/protocol.js";
+import { Hub, type Conn } from "../src/online/hub.js";
+import { dispatch } from "../src/online/referee.js";
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -92,28 +92,7 @@ export function startServer(
 
     socket.on("message", (raw) => {
       if (--budget < 0) return conn.send({ t: "error", id: null, message: "Slow down a little." });
-      let message: ClientMessage;
-      try {
-        message = JSON.parse(String(raw)) as ClientMessage;
-      } catch {
-        return conn.send({ t: "error", id: null, message: "Unreadable message." });
-      }
-      const id = typeof message?.id === "number" ? message.id : 0;
-      try {
-        handle(hub, conn, message);
-        if (
-          message.t !== "create" &&
-          message.t !== "join" &&
-          message.t !== "resume" &&
-          message.t !== "quick"
-        ) {
-          conn.send({ t: "ok", id });
-        }
-      } catch (error) {
-        const text = error instanceof HubError ? error.message : "Something went wrong on the server.";
-        if (!(error instanceof HubError)) console.error(error);
-        conn.send({ t: "error", id, message: text });
-      }
+      dispatch(hub, conn, String(raw));
     });
 
     socket.on("close", () => {
@@ -147,80 +126,12 @@ export function startServer(
   });
 }
 
-const isSize = (v: unknown): v is 7 | 9 => v === 7 || v === 9;
-const isCode = (v: unknown): v is string => typeof v === "string" && /^[A-Z0-9]{5}$/.test(v);
-
-/** Validates the shape of each message before it reaches the hub. */
-function handle(hub: Hub, conn: Conn, m: ClientMessage) {
-  if (!m || typeof m !== "object" || typeof m.t !== "string") throw new HubError("Unknown message.");
-  if (m.t === "hello") {
-    conn.name = cleanName(String(m.name ?? "")) || "Player";
-    conn.clientId = typeof m.clientId === "string" ? m.clientId.slice(0, 64) : "";
-    return;
-  }
-  if (!conn.clientId) throw new HubError("Say hello first.");
-  switch (m.t) {
-    case "create":
-      if (!isSize(m.size)) throw new HubError("Pick a board size.");
-      return hub.create(
-        conn,
-        {
-          size: m.size,
-          roadworks: m.roadworks === true,
-          clock: isClockPreset(m.clock) ? m.clock : "off",
-          isPublic: m.isPublic === true,
-        },
-        m.id,
-      );
-    case "quick":
-      if (!isSize(m.size)) throw new HubError("Pick a board size.");
-      return hub.quick(
-        conn,
-        { size: m.size, roadworks: m.roadworks === true, clock: isClockPreset(m.clock) ? m.clock : "off" },
-        m.id,
-      );
-    case "join":
-      if (!isCode(m.code)) throw new HubError("That code doesn't look right.");
-      return hub.join(conn, m.code, m.id);
-    case "resume":
-      if (!isCode(m.code) || typeof m.token !== "string") throw new HubError("Can't resume that race.");
-      return hub.resume(conn, m.code, m.token, m.id);
-    case "cancel":
-      if (!isCode(m.code)) throw new HubError("Unknown race.");
-      return hub.cancel(conn, m.code);
-    case "move": {
-      if (!isCode(m.code) || !Number.isInteger(m.ply) || !m.action || typeof m.action !== "object") {
-        throw new HubError("Malformed move.");
-      }
-      const a = m.action;
-      const action =
-        a.type === "step"
-          ? { type: "step" as const, row: Number(a.row), col: Number(a.col) }
-          : a.type === "wall" && (a.orientation === "h" || a.orientation === "v")
-            ? { type: "wall" as const, orientation: a.orientation, row: Number(a.row), col: Number(a.col) }
-            : null;
-      if (!action || !Number.isInteger(action.row) || !Number.isInteger(action.col))
-        throw new HubError("Malformed move.");
-      return hub.move(conn, m.code, m.ply, action);
-    }
-    case "resign":
-      if (!isCode(m.code)) throw new HubError("Unknown race.");
-      return hub.resign(conn, m.code);
-    case "claim":
-      if (!isCode(m.code)) throw new HubError("Unknown race.");
-      return hub.claim(conn, m.code);
-    case "rematch":
-      if (!isCode(m.code)) throw new HubError("Unknown race.");
-      return hub.rematch(conn, m.code);
-    case "react":
-      if (!isCode(m.code)) throw new HubError("Unknown race.");
-      return hub.react(conn, m.code, String(m.text));
-    case "leave":
-      if (!isCode(m.code)) throw new HubError("Unknown race.");
-      return hub.leave(conn, m.code);
-    default:
-      throw new HubError("Unknown message.");
-  }
+/** Addresses other devices on the same network can reach this machine at. */
+export function lanAddresses(): string[] {
+  return Object.values(networkInterfaces())
+    .flat()
+    .filter((a) => !!a && a.family === "IPv4" && !a.internal)
+    .map((a) => a!.address);
 }
 
 // Run directly: `node server-dist/index.mjs` (or `tsx server/index.ts` in development).
@@ -231,5 +142,10 @@ if (entry.endsWith("index.ts") || entry.endsWith("index.mjs")) {
   const allowedOrigins = (process.env.ALLOWED_ORIGINS ?? "").split(",").map((s) => s.trim());
   void startServer({ port, staticDir, allowedOrigins }).then(({ port: listening }) => {
     console.log(`Detour server on http://localhost:${listening} (socket at /ws)`);
+    const lan = lanAddresses();
+    if (lan.length) {
+      console.log("Other devices on this network can play at:");
+      for (const address of lan) console.log(`  http://${address}:${listening}`);
+    }
   });
 }

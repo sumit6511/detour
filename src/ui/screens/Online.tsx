@@ -7,8 +7,11 @@ import { ABANDON_AFTER_MS, type Reaction } from "../../online/protocol";
 import { sfx } from "../../audio/sfx";
 import { Board } from "../board/Board";
 import { viewOfMatch } from "../board/view";
+import { Modal } from "../components/Modal";
 import { useToast } from "../components/Toasts";
 import { IconBack, IconCheck } from "../icons";
+import { isNearbyHost } from "../../nearby/registry";
+import { NearbyInvite } from "./NearbyLazy";
 import type { Settings } from "../settings";
 import { Game, type OnlineControls } from "./Game";
 
@@ -32,7 +35,10 @@ export function OnlineScreen(props: OnlineScreenProps) {
   const [names, setNames] = useState<Record<Side, string>>({ south: "Player", north: "Player" });
   const [reactions, setReactions] = useState<Array<{ id: number; side: Side; text: string }>>([]);
   const [now, setNow] = useState(() => Date.now());
+  const [repairing, setRepairing] = useState(false);
   const reported = useRef<string | null>(null);
+  const nearby = session.backend.kind === "nearby";
+  const hosting = nearby && isNearbyHost(session.backend);
 
   useEffect(() => {
     setGame(session.game());
@@ -59,6 +65,11 @@ export function OnlineScreen(props: OnlineScreenProps) {
       live = false;
     };
   }, [session, seatKey]);
+
+  // Pairing again worked: they're back, so the pairing dialog can go.
+  useEffect(() => {
+    if (presence.here) setRepairing(false);
+  }, [presence.here]);
 
   // A clock tick only while the opponent is away, for the "claim the win" countdown.
   useEffect(() => {
@@ -88,8 +99,28 @@ export function OnlineScreen(props: OnlineScreenProps) {
   );
 
   if (game.status === "open") {
-    return <Lobby session={session} game={game} onLeave={props.onExit} />;
+    return nearby ? (
+      <NearbyLobby session={session} game={game} onLeave={props.onExit} />
+    ) : (
+      <Lobby session={session} game={game} onLeave={props.onExit} />
+    );
   }
+
+  const linkDown = nearby && game.status === "playing" && presence.here === false;
+  const relink: OnlineControls["relink"] = !nearby
+    ? undefined
+    : !linkDown
+      ? null
+      : hosting
+        ? {
+            status: `${names[other]}'s device dropped off. Pair again to carry on.`,
+            note: "The link to the other device dropped. Show them a fresh code to carry on.",
+            action: { label: "Pair again", run: () => setRepairing(true) },
+          }
+        : {
+            status: "Lost the link to the host's device.",
+            note: `Ask ${names[other]} to tap Pair again, then scan their new code with your camera.`,
+          };
 
   const online: OnlineControls = {
     code: game.code,
@@ -110,20 +141,79 @@ export function OnlineScreen(props: OnlineScreenProps) {
     requestRematch: () => void run(session.rematch()),
     react: (text: Reaction) => void run(session.react(text)),
     clock: () => session.clock(),
+    relink,
   };
 
   return (
-    <Game
-      match={match}
-      settings={props.settings}
-      onSettings={props.onSettings}
-      onChange={() => {}}
-      onRematch={online.requestRematch}
-      onMenu={props.onExit}
-      onHelp={props.onHelp}
-      onOpenSettings={props.onOpenSettings}
-      online={online}
-    />
+    <>
+      <Game
+        match={match}
+        settings={props.settings}
+        onSettings={props.onSettings}
+        onChange={() => {}}
+        onRematch={online.requestRematch}
+        onMenu={props.onExit}
+        onHelp={props.onHelp}
+        onOpenSettings={props.onOpenSettings}
+        online={online}
+      />
+      {hosting ? (
+        <Modal open={repairing} title="Pair again" onClose={() => setRepairing(false)}>
+          {repairing ? <NearbyInvite gameCode={game.code} /> : null}
+        </Modal>
+      ) : null}
+    </>
+  );
+}
+
+/** The host's waiting room for a nearby race: pair the other device with two QR codes. */
+function NearbyLobby({
+  session,
+  game,
+  onLeave,
+}: {
+  session: OnlineSession;
+  game: OnlineGame;
+  onLeave: () => void;
+}) {
+  return (
+    <main className="lobby">
+      <header className="bar">
+        <button
+          type="button"
+          className="btn btn--quiet"
+          onClick={() => {
+            void session.cancel();
+            onLeave();
+          }}
+        >
+          <IconBack /> Cancel
+        </button>
+        <span />
+        <span />
+      </header>
+      <motion.section
+        className="card lobby__card"
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ type: "spring", stiffness: 380, damping: 32 }}
+      >
+        <div className="lobby__status">
+          <span className="radar" aria-hidden="true" />
+          <h1>Pair the other device</h1>
+          <p className="lede">
+            Both devices need to be on the same Wi-Fi. Keep this tab open: this device referees the race.
+          </p>
+        </div>
+        <NearbyInvite gameCode={game.code} />
+        <p className="hint">
+          You'll play {session.you === "south" ? "orange and move first" : "teal and move second"}.{" "}
+          {game.setup.size}×{game.setup.size}, {game.setup.wallsEach} barricades each
+          {game.setup.roadworks ? ", with roadworks" : ""}
+          {game.setup.clock !== "off" ? `, ${game.setup.clock} clock` : ""}.
+        </p>
+      </motion.section>
+    </main>
   );
 }
 

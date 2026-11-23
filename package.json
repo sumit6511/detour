@@ -22,7 +22,9 @@
     "start": "node server-dist/index.mjs"
   },
   "dependencies": {
+    "jsqr": "^1.4.0",
     "motion": "^12.42.2",
+    "qrcode-generator": "^2.0.4",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "ws": "^8.23.0"

@@ -79,6 +79,11 @@ export interface OnlineControls {
   reactions: Array<{ id: number; side: Side; text: string }>;
   /** Both sides' remaining time right now, or null for an untimed race. */
   clock: () => Record<Side, number> | null;
+  /**
+   * Nearby races only (undefined otherwise): while the link between the devices is down, what
+   * happened and how to re-link; null while it's up.
+   */
+  relink?: { status: string; note: string; action?: { label: string; run: () => void } } | null;
   play: (action: DetourAction) => void;
   resign: () => void;
   claim: () => void;
@@ -483,6 +488,7 @@ export function Game({
     if (liveWinner) return "";
     if (thinking) return "The bot is thinking…";
     if (online && online.opponent.here === false) {
+      if (online.relink && !online.canClaim) return online.relink.status;
       return online.canClaim
         ? `${names[opponentOf(online.you)]} left. You can claim the win, or keep waiting.`
         : `${names[opponentOf(online.you)]} lost connection. Waiting for them to come back…`;
@@ -510,7 +516,7 @@ export function Game({
   };
 
   const modeLabel = online
-    ? `Online · ${online.code}`
+    ? `${online.relink !== undefined ? "Nearby" : "Online"} · ${online.code}`
     : vsBot
       ? `vs Bot · ${LEVEL_LABEL[setup.level]}`
       : "Two players";
@@ -582,17 +588,10 @@ export function Game({
         </LayoutGroup>
 
         <p className="area-status status" aria-live="polite">
-          <AnimatePresence mode="wait" initial={false}>
-            <motion.span
-              key={status()}
-              initial={{ opacity: 0, y: 4 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -4 }}
-              transition={{ duration: 0.16 }}
-            >
-              {status() || " "}
-            </motion.span>
-          </AnimatePresence>
+          {/* Each new line fades in (a CSS animation on mount); it never waits on the old one. */}
+          <span key={status()} className="status__line">
+            {status() || " "}
+          </span>
         </p>
 
         <div className="area-board">
@@ -765,6 +764,16 @@ export function Game({
                         {text}
                       </button>
                     ))}
+                  </div>
+                ) : null}
+                {online?.relink ? (
+                  <div className="claim claim--relink" role="status">
+                    <span>{online.relink.note}</span>
+                    {online.relink.action ? (
+                      <button type="button" className="btn" onClick={online.relink.action.run}>
+                        {online.relink.action.label}
+                      </button>
+                    ) : null}
                   </div>
                 ) : null}
                 {online?.canClaim ? (

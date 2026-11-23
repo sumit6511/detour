@@ -1,8 +1,7 @@
-import { randomBytes } from "node:crypto";
-import type { DetourAction, Side } from "../src/engine/game.js";
-import { opponentOf } from "../src/engine/game.js";
-import type { BoardSize } from "../src/engine/match.js";
-import type { ClockPreset } from "../src/engine/clock.js";
+import type { DetourAction, Side } from "../engine/game.js";
+import { opponentOf } from "../engine/game.js";
+import type { BoardSize } from "../engine/match.js";
+import type { ClockPreset } from "../engine/clock.js";
 import {
   applyMove,
   gameClock,
@@ -11,12 +10,13 @@ import {
   timeoutGame,
   makeCode,
   newGame,
+  parseGame,
   rematchGame,
   resignGame,
   sideOf,
   type OnlineGame,
-} from "../src/online/game.js";
-import { ABANDON_AFTER_MS, isReaction, type ServerMessage } from "../src/online/protocol.js";
+} from "./game.js";
+import { ABANDON_AFTER_MS, isReaction, type ServerMessage } from "./protocol.js";
 
 /** One open socket. A player with two tabs is two connections in the same seat. */
 export interface Conn {
@@ -35,13 +35,20 @@ interface Room {
   awaySince: Record<Side, number | null>;
 }
 
+export type HubSnapshot = Array<{
+  game: OnlineGame;
+  tokens: Record<Side, string | null>;
+  clientIds: Record<Side, string | null>;
+}>;
+
 const OPEN_ROOM_TTL_MS = 15 * 60_000;
 const ROOM_TTL_MS = 3 * 60 * 60_000;
 
 export class HubError extends Error {}
 
 /**
- * Every live race on this server. Authoritative: clients only ever send intentions, and each
+ * Every live race on this referee: the game server's, or the one running inside the host's
+ * browser in a nearby (same Wi-Fi) game. Authoritative: clients only ever send intentions, and each
  * one is checked by the same engine the browser runs before anyone else hears about it.
  */
 export class Hub {
@@ -259,6 +266,36 @@ export class Hub {
     }
   }
 
+  /** Everything needed to pick the hub back up later (a nearby host reloading its tab). */
+  snapshot(): HubSnapshot {
+    return [...this.rooms.values()].map((room) => ({
+      game: room.game,
+      tokens: room.tokens,
+      clientIds: room.clientIds,
+    }));
+  }
+
+  /** Puts rooms from a snapshot back. Nobody is connected yet, so everyone starts away. */
+  restore(snapshot: unknown) {
+    if (!Array.isArray(snapshot)) return;
+    const now = this.now();
+    const text = (v: unknown) => (typeof v === "string" ? v : null);
+    for (const entry of snapshot as Array<Partial<HubSnapshot[number]>>) {
+      const game = parseGame(entry?.game);
+      if (!game || this.rooms.has(game.code)) continue;
+      this.rooms.set(game.code, {
+        game,
+        tokens: { south: text(entry.tokens?.south), north: text(entry.tokens?.north) },
+        clientIds: { south: text(entry.clientIds?.south), north: text(entry.clientIds?.north) },
+        conns: { south: new Set(), north: new Set() },
+        awaySince: {
+          south: game.players.south ? now : null,
+          north: game.players.north ? now : null,
+        },
+      });
+    }
+  }
+
   // ---------------------------------------------------------------- internals
 
   private seat(room: Room, side: Side, conn: Conn, id: number | null) {
@@ -329,6 +366,9 @@ export class Hub {
   }
 }
 
+/** Random hex from the platform's secure generator (Node and browsers alike). */
 function token(bytes: number): string {
-  return randomBytes(bytes).toString("hex");
+  return Array.from(globalThis.crypto.getRandomValues(new Uint8Array(bytes)), (b) =>
+    b.toString(16).padStart(2, "0"),
+  ).join("");
 }

@@ -4,8 +4,8 @@ A wall-placing race game for the browser. Get your pawn to the far side of the b
 opponent does. Each turn you either take a step or drop a barricade to send them the long way
 round, but you can never wall anyone in completely.
 
-Play against a bot (Easy, Medium or Hard), against a friend on the same screen, or online
-against anyone.
+Play against a bot (Easy, Medium or Hard), against a friend on the same screen, online against
+anyone, or against someone on the same Wi-Fi with no server at all.
 
 ## Rules
 
@@ -66,6 +66,7 @@ seconds, show tenths, and tick audibly in your last 10.
   as your own clock hits zero. If it has gone quiet, your opponent's browser calls the race once
   your clock is three seconds past zero.
 - Quick match only pairs players who chose the same time control.
+- **Nearby:** the host's device keeps the official time, exactly as the server does online.
 
 ## Online play
 
@@ -83,7 +84,45 @@ away. After a full minute away you can claim the win, or keep waiting. Reload mi
 straight back to your seat. After the race, both players can agree to a rematch, which swaps
 sides and deals a new layout. Undo and hints are off online.
 
-### Two ways to host it
+## Nearby play (same Wi-Fi, no server)
+
+Pick **Nearby** in the menu. One player taps **Host on this device**; the other joins:
+
+1. The host's screen shows a QR code. The other player points their phone's camera at it (or
+   opens the invite link, if it was sent to them), and the game opens ready to join.
+2. Their screen now shows a reply QR code. The host taps **Scan their reply** and points their
+   camera at it, or pastes the reply. The race starts as soon as the devices link.
+
+The two devices then talk directly over a WebRTC data channel. Only local network addresses are
+exchanged (no STUN or TURN servers), so nothing leaves the network, and it works on any static
+copy of the game, GitHub Pages included. Both devices need to be on the same network; guest
+Wi-Fi often keeps devices apart, so use the main one.
+
+The host's tab is the referee: it runs the same hub and message handling as the Detour server,
+and both players (the host included) talk to it through the same client the server uses. Every
+rule, clock, reaction and rematch therefore works exactly as it does online. If the link drops
+(a phone goes to sleep, a page reloads), the host taps **Pair again** and shows a fresh code;
+the other player scans it and is back in their own seat with the race as it was. The host can
+reload too: the races are kept in the tab's session storage and picked back up.
+
+Pairing codes are small: the browser's connection description is cut down to what a data
+channel needs (ICE username and password, the DTLS certificate fingerprint, the role, and a few
+local candidates) and packed as bytes, about 130 characters, so the QR codes stay easy to scan.
+A reply link opened on the host's own browser is passed to the waiting tab automatically.
+
+### Or run the server on your own computer
+
+The game server works on a home network too: run it on one machine and everyone on the same
+Wi-Fi opens the address it prints, then plays with **Online** as usual.
+
+```bash
+npm run build && npm run build:server && npm start
+# Detour server on http://localhost:8787 (socket at /ws)
+# Other devices on this network can play at:
+#   http://192.168.1.23:8787
+```
+
+## Two ways to host online play
 
 1. **The Detour server** (`server/`): a small Node service that serves the built game and runs
    the multiplayer socket at `/ws` on the same port. It is authoritative: every move is checked
@@ -138,20 +177,20 @@ npm run dev
 
 Then open the URL Vite prints (usually http://localhost:5173).
 
-| Command                | What it does                                                              |
-| ---------------------- | ------------------------------------------------------------------------- |
-| `npm run dev`          | Start the game and the game server with hot reload                        |
-| `npm run dev:web`      | Start only the game (no online play)                                      |
-| `npm run build:server` | Bundle the game server into `server-dist/`                                |
-| `npm start`            | Run the bundled game server (serves `dist/` too)                          |
-| `npm run build`        | Type-check and build a static site into `dist/`                           |
-| `npm run build:single` | Build one self-contained `dist-single/detour.html` you can open from disk |
-| `npm test`             | Unit tests (engine, notation, geometry, online model, server, backends)   |
-| `npm run test:e2e`     | Browser tests on desktop and phone, including two-player online races     |
-| `npm run lint`         | ESLint                                                                    |
-| `npm run format`       | Prettier                                                                  |
-| `npm run typecheck`    | Type-check everything                                                     |
-| `npm run sim`          | Play the bots against scripted opponents and print win rates              |
+| Command                | What it does                                                                         |
+| ---------------------- | ------------------------------------------------------------------------------------ |
+| `npm run dev`          | Start the game and the game server with hot reload                                   |
+| `npm run dev:web`      | Start only the game (no online play)                                                 |
+| `npm run build:server` | Bundle the game server into `server-dist/`                                           |
+| `npm start`            | Run the bundled game server (serves `dist/` too)                                     |
+| `npm run build`        | Type-check and build a static site into `dist/`                                      |
+| `npm run build:single` | Build one self-contained `dist-single/detour.html` you can open from disk            |
+| `npm test`             | Unit tests (engine, notation, geometry, online model, server, backends, nearby link) |
+| `npm run test:e2e`     | Browser tests on desktop and phone, including two-player online and nearby races     |
+| `npm run lint`         | ESLint                                                                               |
+| `npm run format`       | Prettier                                                                             |
+| `npm run typecheck`    | Type-check everything                                                                |
+| `npm run sim`          | Play the bots against scripted opponents and print win rates                         |
 
 The browser tests download their own Chromium the first time (`npx playwright install
 chromium`). To use a Chromium you already have, set `PW_CHROMIUM_PATH` to its path.
@@ -180,15 +219,18 @@ src/
     generator.ts     Roadworks layouts (mirror-image pairs)
     match.ts         A whole race as data: setup + move list, play/undo/resign, save format
   ai/                Web Worker that runs the bot, plus a client with a main-thread fallback
-  online/            Online races: shared game model and validation, the socket protocol, and
+  online/            Online races: shared game model and validation, the socket protocol, the
+                     referee (hub.ts + referee.ts, shared by the server and nearby hosts), and
                      two backends (Detour server, Claude artifact storage)
+  nearby/            Same-Wi-Fi races: pairing codes (signal.ts) and the WebRTC link (link.ts)
   audio/sfx.ts       Synthesized sound effects
   ui/
     board/           The SVG board: geometry (pointer → square or groove), animations, confetti
-    screens/         Menu (with live demo race), Game, Online (lobby + race), How to Play, Settings
-    components/      Modal, toasts, segmented control, switch, rolling numbers
+    screens/         Menu (with live demo race), Game, Online (lobby + race), Nearby (pairing),
+                     How to Play, Settings
+    components/      Modal, toasts, segmented control, switch, rolling numbers, QR code and scanner
   styles.css         Design tokens (light and dark) and all styling
-server/              The game server: rooms, matchmaking, reconnects (hub.ts) and HTTP + WebSocket
+server/              The game server: HTTP + WebSocket around the shared referee
 tests/e2e/           Playwright browser tests
 scripts/             Bot balance simulation, single-file build
 ```
