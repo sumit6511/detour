@@ -46,7 +46,7 @@ test("a race against the bot: step, bot replies, undo, resign", async ({ page })
 test("barricades: place one, and an illegal one is explained", async ({ page }) => {
   await page.locator("label", { hasText: "Friend" }).click();
   // No roadworks, so the keyboard cursor's starting slot is free.
-  await page.locator("label", { hasText: "Off" }).click();
+  await page.locator("label:has(#roadworks-off)").click();
   await page.getByRole("button", { name: /Start race/ }).click();
   await page.getByRole("button", { name: "Move to d2" }).click();
 

@@ -10,6 +10,7 @@ import {
 } from "../engine/match.js";
 import { generateStones } from "../engine/generator.js";
 import { createRng, randInt } from "../engine/rng.js";
+import { clockSetting, isClockPreset, remainingFrom, type ClockPreset } from "../engine/clock.js";
 
 /** A seat at the table: an opaque player id plus the name to show (server mode only). */
 export interface Seat {
@@ -20,6 +21,7 @@ export interface Seat {
 export interface OnlineSetup {
   size: BoardSize;
   roadworks: boolean;
+  clock: ClockPreset;
   wallsEach: number;
   stones: Wall[];
   seed: number;
@@ -39,6 +41,16 @@ export interface OnlineGame {
   resigned: Side | null;
   /** True when `resigned` was a forfeit claimed by the opponent after an absence. */
   abandoned: boolean;
+  /** Timed races: the side whose clock ran out. */
+  timedOut: Side | null;
+  /** When the current turn began, on the clock of whoever recorded it (ms since epoch). */
+  turnStartedAt: number;
+  /**
+   * Server races: how much of the current turn had passed when this copy was sent. Lets each
+   * browser run the clock from the moment it received the game, so their own clocks never need
+   * to agree with the server's. Zero for races stored with a Claude page.
+   */
+  turnElapsedMs: number;
   status: "open" | "playing" | "finished";
   rematch: Record<Side, boolean>;
   /** The rematch's code, once it exists. */
@@ -52,6 +64,7 @@ export interface OnlineGame {
 export interface CreateOptions {
   size: BoardSize;
   roadworks: boolean;
+  clock: ClockPreset;
   isPublic: boolean;
 }
 
@@ -74,12 +87,16 @@ export function normaliseCode(text: string): string | null {
   return [...code].every((ch) => CODE_ALPHABET.includes(ch)) ? code : null;
 }
 
-export function newSetup(options: Pick<CreateOptions, "size" | "roadworks">, seed: number): OnlineSetup {
+export function newSetup(
+  options: Pick<CreateOptions, "size" | "roadworks" | "clock">,
+  seed: number,
+): OnlineSetup {
   const rng = createRng(seed);
   const pairs = options.roadworks ? randInt(rng, 1, options.size === 9 ? 3 : 2) : 0;
   return {
     size: options.size,
     roadworks: options.roadworks,
+    clock: options.clock,
     wallsEach: WALLS_FOR_SIZE[options.size],
     stones: generateStones(rng, options.size, pairs),
     seed,
@@ -103,6 +120,9 @@ export function newGame(
     moves: [],
     resigned: null,
     abandoned: false,
+    timedOut: null,
+    turnStartedAt: now,
+    turnElapsedMs: 0,
     status: "open",
     rematch: { south: false, north: false },
     next: null,
@@ -122,7 +142,12 @@ export function rematchGame(
   return {
     ...newGame(
       code,
-      { size: previous.setup.size, roadworks: previous.setup.roadworks, isPublic: false },
+      {
+        size: previous.setup.size,
+        roadworks: previous.setup.roadworks,
+        clock: previous.setup.clock,
+        isPublic: false,
+      },
       previous.players.south!,
       now,
       random,
@@ -143,28 +168,65 @@ export function toMatch(game: OnlineGame): Match {
     setup: { ...game.setup, mode: "online", level: "medium" },
     moves: game.moves,
     resigned: game.resigned,
+    timedOut: game.timedOut,
     startedAt: game.createdAt,
   };
+}
+
+export function moverOf(game: OnlineGame): Side {
+  return game.moves.length % 2 === 0 ? "south" : "north";
+}
+
+/** Remaining time for both sides, given how long the current turn has been running. */
+export function gameClock(game: OnlineGame, currentElapsedMs: number): Record<Side, number> | null {
+  const setting = clockSetting(game.setup.clock);
+  if (!setting) return null;
+  const mover = game.status === "playing" ? moverOf(game) : null;
+  const times = remainingFrom(setting, game.moves, mover, Math.max(0, currentElapsedMs));
+  if (game.timedOut) times[game.timedOut] = 0;
+  return times;
+}
+
+export function timeoutGame(game: OnlineGame, side: Side, now: number): OnlineGame | string {
+  if (game.status !== "playing") return "This race isn't in progress.";
+  return { ...game, timedOut: side, status: "finished", updatedAt: now };
 }
 
 /**
  * Applies `action` for `side`, or explains why not. Used by the server for every incoming move
  * and by clients before they write one.
  */
+export const OUT_OF_TIME = "Your time ran out.";
+
+/**
+ * Applies `action` for `side`, or explains why not. In a timed race `spentMs` is how long the
+ * mover took; a move that arrives after their clock ran out is refused with OUT_OF_TIME.
+ */
 export function applyMove(
   game: OnlineGame,
   side: Side,
   action: DetourAction,
   now: number,
+  spentMs = 0,
 ): OnlineGame | string {
   if (game.status !== "playing")
     return game.status === "open" ? "Waiting for an opponent." : "This race is over.";
-  const match = toMatch(game);
-  if ((match.moves.length % 2 === 0 ? "south" : "north") !== side) return "It's not your turn.";
-  const next = play(match, action);
+  if (moverOf(game) !== side) return "It's not your turn.";
+  const next = play(toMatch(game), action);
   if (!next) return "That move isn't allowed.";
-  const finished = winnerOf(next) !== null;
-  return { ...game, moves: next.moves, status: finished ? "finished" : "playing", updatedAt: now };
+  const timed = clockSetting(game.setup.clock) !== null;
+  const spent = Math.max(0, Math.round(spentMs));
+  if (timed && gameClock(game, spent)![side] <= 0) return OUT_OF_TIME;
+  const moves = timed ? [...game.moves, { side, action, spentMs: spent }] : next.moves;
+  const finished = winnerOf({ ...next, moves }) !== null;
+  return {
+    ...game,
+    moves,
+    status: finished ? "finished" : "playing",
+    turnStartedAt: now,
+    turnElapsedMs: 0,
+    updatedAt: now,
+  };
 }
 
 export function resignGame(
@@ -237,7 +299,8 @@ function parseSetup(v: unknown): OnlineSetup | null {
   }
   const seed = Number(v.seed);
   if (!Number.isFinite(seed)) return null;
-  return { size, roadworks: v.roadworks === true, wallsEach: WALLS_FOR_SIZE[size], stones, seed };
+  const clock = isClockPreset(v.clock) ? v.clock : "off";
+  return { size, roadworks: v.roadworks === true, clock, wallsEach: WALLS_FOR_SIZE[size], stones, seed };
 }
 
 /**
@@ -270,11 +333,19 @@ export function parseGame(raw: unknown): OnlineGame | null {
     if (m.side !== expected) break;
     const next = play(match, action);
     if (!next) break;
-    match = next;
+    // Keep each move's time on timed races (capped at a day; anything odd counts as zero).
+    const spent = Number(m.spentMs);
+    const spentMs = Number.isFinite(spent) ? Math.min(Math.max(0, spent), 86_400_000) : 0;
+    match =
+      setup.clock !== "off" ? { ...next, moves: [...match.moves, { side: m.side, action, spentMs }] } : next;
   }
 
   const resigned = isSide(raw.resigned) && !winnerOf(match) ? raw.resigned : null;
-  const finished = resigned !== null || winnerOf(match) !== null;
+  const timedOut =
+    setup.clock !== "off" && resigned === null && isSide(raw.timedOut) && !winnerOf(match)
+      ? raw.timedOut
+      : null;
+  const finished = resigned !== null || timedOut !== null || winnerOf(match) !== null;
   const status = finished
     ? "finished"
     : raw.status === "open" && !(players.south && players.north)
@@ -294,12 +365,15 @@ export function parseGame(raw: unknown): OnlineGame | null {
     moves: match.moves,
     resigned,
     abandoned: resigned !== null && raw.abandoned === true,
+    timedOut,
     status,
     rematch,
     next,
     isPublic: raw.isPublic === true,
     createdAt: number(raw.createdAt),
     updatedAt: number(raw.updatedAt),
+    turnStartedAt: number(raw.turnStartedAt) || number(raw.updatedAt),
+    turnElapsedMs: Math.max(0, number(raw.turnElapsedMs)),
   };
 }
 

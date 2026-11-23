@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { AnimatePresence, MotionConfig, motion } from "motion/react";
 import { setSoundEnabled } from "../audio/sfx";
+import { isClockPreset } from "../engine/clock";
 import { HUMAN, createMatch, isMatch, winnerOf, type Match, type MatchOptions } from "../engine/match";
 import { ToastProvider } from "./components/Toasts";
 import { Game } from "./screens/Game";
@@ -46,6 +47,7 @@ const DEFAULT_OPTIONS: MatchOptions = {
   mode: "bot",
   level: "medium",
   roadworks: true,
+  clock: "off",
 };
 
 const isOptions = (v: unknown): boolean => {
@@ -55,7 +57,8 @@ const isOptions = (v: unknown): boolean => {
     (o.size === 7 || o.size === 9) &&
     (o.mode === "bot" || o.mode === "friend" || o.mode === "online") &&
     (o.level === "easy" || o.level === "medium" || o.level === "hard") &&
-    typeof o.roadworks === "boolean"
+    typeof o.roadworks === "boolean" &&
+    (o.clock === undefined || isClockPreset(o.clock))
   );
 };
 
@@ -209,6 +212,7 @@ export function App() {
         mode: opts.mode,
         level: opts.level,
         roadworks: opts.roadworks,
+        clock: opts.clock ?? "off",
       }),
     );
     setScreen("game");

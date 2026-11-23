@@ -1,5 +1,6 @@
 import type { DetourAction, Side } from "../engine/game";
 import type { BoardSize } from "../engine/match";
+import type { ClockPreset } from "../engine/clock";
 import type { CreateOptions, OnlineGame } from "./game";
 import type { Reaction } from "./protocol";
 
@@ -24,6 +25,8 @@ export interface OnlineSession {
   /** A rematch was agreed: the table moved to a new race (and maybe a new side). */
   onSwitch(listener: (next: OnlineSession) => void): Unsubscribe;
   names(): Promise<Record<Side, string>>;
+  /** Both sides' remaining time right now, or null for an untimed race. */
+  clock(): Record<Side, number> | null;
   play(action: DetourAction): Promise<void>;
   resign(): Promise<void>;
   claim(): Promise<void>;
@@ -47,7 +50,10 @@ export interface OnlineBackend {
   readiness(): Promise<Readiness>;
   create(options: CreateOptions, name: string): Promise<OnlineSession>;
   join(code: string, name: string): Promise<OnlineSession>;
-  quick(options: { size: BoardSize; roadworks: boolean }, name: string): Promise<OnlineSession>;
+  quick(
+    options: { size: BoardSize; roadworks: boolean; clock: ClockPreset },
+    name: string,
+  ): Promise<OnlineSession>;
   /** Pick a seat back up after a reload, or null if this browser has no seat there. */
   resume(code: string): Promise<OnlineSession | null>;
   /** How someone else joins: a link where one exists, otherwise null (share the code). */

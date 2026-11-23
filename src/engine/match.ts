@@ -12,6 +12,7 @@ import {
 } from "./game.js";
 import { generateStones } from "./generator.js";
 import { createRng, randInt } from "./rng.js";
+import { clockSetting, remainingFrom, type ClockPreset } from "./clock.js";
 
 export type Mode = "bot" | "friend" | "online";
 export type BoardSize = 7 | 9;
@@ -24,6 +25,8 @@ export interface MatchOptions {
   level: BotLevel;
   /** Scatter a few fixed concrete barriers (in mirror-image pairs) before the race starts. */
   roadworks: boolean;
+  /** Time control; absent on races saved before clocks existed. */
+  clock?: ClockPreset;
 }
 
 export interface MatchSetup extends MatchOptions {
@@ -36,6 +39,16 @@ export interface MatchSetup extends MatchOptions {
 export interface MatchMove {
   side: Side;
   action: DetourAction;
+  /** Timed races: how long the mover took over this move. */
+  spentMs?: number;
+}
+
+/** The running state of a timed race's current turn. */
+export interface ClockRun {
+  /** When the current turn's clock last started (ms since epoch); null while paused. */
+  turnStartedAt: number | null;
+  /** Time already spent on the current turn before the last pause. */
+  bankedMs: number;
 }
 
 /**
@@ -54,6 +67,10 @@ export interface Match {
   hints?: number;
   /** Set once a finished race against the bot has been counted in the player's record. */
   recorded?: boolean;
+  /** Timed races only. */
+  clockRun?: ClockRun;
+  /** The side whose clock ran out. */
+  timedOut?: Side | null;
 }
 
 /** South (bottom) is always the human in bot mode, and always moves first. */
@@ -74,6 +91,10 @@ export function createMatch(options: MatchOptions, seed = Math.floor(Math.random
     resigned: null,
     startedAt: Date.now(),
     hints: 0,
+    // The clock starts when the race is first on screen (see resumeClock).
+    ...(clockSetting(options.clock)
+      ? { clockRun: { turnStartedAt: null, bankedMs: 0 }, timedOut: null }
+      : {}),
   };
 }
 
@@ -89,16 +110,77 @@ export function sideToMove(match: Match): Side {
 
 export function winnerOf(match: Match, state = replay(match)): Side | null {
   if (match.resigned) return opponentOf(match.resigned);
+  if (match.timedOut) return opponentOf(match.timedOut);
   return state.winner;
 }
 
-/** Appends `action` for whoever is to move, or returns null if it isn't legal right now. */
-export function play(match: Match, action: DetourAction): Match | null {
+// ---------------------------------------------------------------- clocks
+
+function elapsedThisTurn(match: Match, now: number): number {
+  const run = match.clockRun;
+  if (!run) return 0;
+  return run.bankedMs + (run.turnStartedAt !== null ? Math.max(0, now - run.turnStartedAt) : 0);
+}
+
+/** Both sides' remaining time at `now`, or null for an untimed race. */
+export function clockTimes(match: Match, now: number): Record<Side, number> | null {
+  const setting = clockSetting(match.setup.clock);
+  if (!setting) return null;
+  const running = winnerOf(match) ? null : sideToMove(match);
+  const times = remainingFrom(setting, match.moves, running, elapsedThisTurn(match, now));
+  // Whoever ran out of time shows exactly zero, not the time they had when the turn began.
+  if (match.timedOut) times[match.timedOut] = 0;
+  return times;
+}
+
+export function clockRunning(match: Match): boolean {
+  return !!match.clockRun && match.clockRun.turnStartedAt !== null && !winnerOf(match);
+}
+
+/** Stop the clock (leaving the race screen, hiding the tab). Time spent so far is kept. */
+export function pauseClock(match: Match, now: number): Match {
+  const run = match.clockRun;
+  if (!run || run.turnStartedAt === null) return match;
+  return { ...match, clockRun: { turnStartedAt: null, bankedMs: elapsedThisTurn(match, now) } };
+}
+
+export function resumeClock(match: Match, now: number): Match {
+  const run = match.clockRun;
+  if (!run || run.turnStartedAt !== null || winnerOf(match)) return match;
+  return { ...match, clockRun: { ...run, turnStartedAt: now } };
+}
+
+/** The side to move, if their time has run out at `now`. */
+export function flagged(match: Match, now: number): Side | null {
+  const times = clockTimes(match, now);
+  if (!times || winnerOf(match)) return null;
+  const mover = sideToMove(match);
+  return times[mover] <= 0 ? mover : null;
+}
+
+export function timeOut(match: Match, side: Side, now: number): Match {
+  if (winnerOf(match)) return match;
+  return { ...pauseClock(match, now), timedOut: side };
+}
+
+/**
+ * Appends `action` for whoever is to move, or returns null if it isn't legal right now
+ * (including when the mover's clock has already run out).
+ */
+export function play(match: Match, action: DetourAction, now: number = Date.now()): Match | null {
   const state = replay(match);
   if (winnerOf(match, state)) return null;
   const side = sideToMove(match);
   if (!isLegalAction(state, side, action)) return null;
-  return { ...match, moves: [...match.moves, { side, action }] };
+  if (!match.clockRun) return { ...match, moves: [...match.moves, { side, action }] };
+  if (flagged(match, now)) return null;
+  const spentMs = Math.round(elapsedThisTurn(match, now));
+  return {
+    ...match,
+    moves: [...match.moves, { side, action, spentMs }],
+    // A move made while the clock is paused (the bot replying in a hidden tab) leaves it paused.
+    clockRun: { turnStartedAt: match.clockRun.turnStartedAt === null ? null : now, bankedMs: 0 },
+  };
 }
 
 export function isBotTurn(match: Match): boolean {
@@ -119,7 +201,8 @@ export function playBot(match: Match): Match {
  * human's turn again. Finished races can't be undone.
  */
 export function undo(match: Match): Match {
-  if (winnerOf(match) || match.moves.length === 0) return match;
+  // Timed races have no undo: it would hand thinking time back.
+  if (winnerOf(match) || match.moves.length === 0 || match.clockRun) return match;
   const last = match.moves[match.moves.length - 1]!;
   let moves = match.moves.slice(0, -1);
   // Taking back only the bot's reply would just make it play the same reply again.

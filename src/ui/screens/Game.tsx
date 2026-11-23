@@ -19,6 +19,8 @@ import {
   type Match,
 } from "../../engine/match";
 import { actionName } from "../../engine/notation";
+import { formatClock } from "../../engine/clock";
+import { clockRunning, clockTimes, flagged, pauseClock, resumeClock, timeOut } from "../../engine/match";
 import { Board, type DetourSign, type WallNote } from "../board/Board";
 import { viewOfMatch } from "../board/view";
 import { Modal } from "../components/Modal";
@@ -75,6 +77,8 @@ export interface OnlineControls {
   abandoned: boolean;
   rematch: { you: boolean; them: boolean };
   reactions: Array<{ id: number; side: Side; text: string }>;
+  /** Both sides' remaining time right now, or null for an untimed race. */
+  clock: () => Record<Side, number> | null;
   play: (action: DetourAction) => void;
   resign: () => void;
   claim: () => void;
@@ -119,6 +123,67 @@ export function Game({
   const [celebrate, setCelebrate] = useState(0);
   const [shake, setShake] = useState(0);
   const [confirmResign, setConfirmResign] = useState(false);
+
+  // ---------- Clocks ----------
+  const latest = useRef(match);
+  latest.current = match;
+  const timed = online ? online.clock() !== null : !!match.clockRun;
+  const readClock = (side: Side) => () => {
+    const times = online ? online.clock() : clockTimes(latest.current, Date.now());
+    return times ? times[side] : null;
+  };
+
+  // A local race's clock runs only while it's on screen and the tab is visible.
+  useEffect(() => {
+    if (online || !latest.current.clockRun) return;
+    const resume = () => {
+      const m = latest.current;
+      if (!document.hidden && m.clockRun?.turnStartedAt === null && !winnerOf(m))
+        onChange(resumeClock(m, Date.now()));
+    };
+    const pause = () => {
+      const m = latest.current;
+      if (m.clockRun && m.clockRun.turnStartedAt !== null) onChange(pauseClock(m, Date.now()));
+    };
+    const onVisibility = () => (document.hidden ? pause() : resume());
+    resume();
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      pause();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [online, timed]);
+
+  // Flag fall for local races: wake up exactly when the mover's time would run out.
+  useEffect(() => {
+    if (online || !match.clockRun || match.clockRun.turnStartedAt === null || winnerOf(match)) return;
+    const left = clockTimes(match, Date.now())![sideToMove(match)];
+    const timer = setTimeout(
+      () => {
+        const m = latest.current;
+        const side = flagged(m, Date.now());
+        if (side) onChange(timeOut(m, side, Date.now()));
+      },
+      Math.max(0, left) + 25,
+    );
+    return () => clearTimeout(timer);
+  }, [match, online, onChange]);
+
+  // A race lost or won on time gets its sound too (moves get theirs below).
+  const lastTimeout = useRef(match.timedOut ?? null);
+  useEffect(() => {
+    const side = match.timedOut ?? null;
+    if (side && side !== lastTimeout.current) {
+      const you = online?.you ?? (vsBot ? HUMAN : null);
+      if (you === side) sfx.lose();
+      else {
+        sfx.win();
+        if (!vsBot || you !== null) setCelebrate((n) => n + 1);
+      }
+    }
+    lastTimeout.current = side;
+  }, [match.timedOut, online?.you, vsBot]);
 
   // What the board shows: the live race, or a point in its replay.
   const shown = useMemo(
@@ -307,7 +372,12 @@ export function Game({
   };
 
   const canUndo =
-    !online && !rewind && !liveWinner && !thinking && match.moves.some((m) => !vsBot || m.side === HUMAN);
+    !online &&
+    !match.clockRun &&
+    !rewind &&
+    !liveWinner &&
+    !thinking &&
+    match.moves.some((m) => !vsBot || m.side === HUMAN);
 
   // ---------- Keyboard ----------
   // One window listener for the screen's lifetime, always calling the latest handler, so keys
@@ -457,6 +527,7 @@ export function Game({
           </span>
           <span className="bar__meta">
             {modeLabel} · {setup.size}×{setup.size}
+            {setup.clock && setup.clock !== "off" ? ` · ${setup.clock}` : ""}
           </span>
         </div>
         <div className="bar__actions">
@@ -495,6 +566,16 @@ export function Game({
                 tag={vsBot && side === "north" ? LEVEL_LABEL[setup.level] : null}
                 away={!!online && side !== online.you && online.opponent.here === false}
                 reaction={online?.reactions.filter((r) => r.side === side).at(-1) ?? null}
+                clock={
+                  timed ? (
+                    <RacerClock
+                      read={readClock(side)}
+                      running={!winner && !rewind && mover === side && (online ? true : clockRunning(match))}
+                      audible={side === (online?.you ?? (vsBot ? HUMAN : mover))}
+                      stamp={match.moves.length + (match.timedOut ? 1000 : 0)}
+                    />
+                  ) : null
+                }
               />
             ))}
           </div>
@@ -767,6 +848,55 @@ function Panel({ children }: { children: ReactNode }) {
   );
 }
 
+/**
+ * A racer's clock. It ticks on its own (so the board doesn't re-render ten times a second),
+ * turns red in the last 20 seconds, and ticks audibly in the last 10 for the player's own clock.
+ */
+function RacerClock({
+  read,
+  running,
+  audible,
+  stamp,
+}: {
+  read: () => number | null;
+  running: boolean;
+  audible: boolean;
+  /** Changes with every move, so a stopped clock shows its new value straight away. */
+  stamp: number;
+}) {
+  const reader = useRef(read);
+  reader.current = read;
+  const [ms, setMs] = useState(() => read() ?? 0);
+  const lastSecond = useRef<number | null>(null);
+
+  useEffect(() => {
+    setMs(reader.current() ?? 0);
+    if (!running) return;
+    const timer = setInterval(() => {
+      const left = reader.current() ?? 0;
+      setMs(left);
+      const second = Math.ceil(left / 1000);
+      if (audible && left > 0 && left <= 10_000 && second !== lastSecond.current) sfx.tick();
+      lastSecond.current = second;
+    }, 100);
+    return () => clearInterval(timer);
+  }, [running, audible, stamp]);
+
+  const low = ms <= 20_000;
+  const critical = ms <= 10_000;
+  return (
+    <span
+      className={`clock${running ? " clock--running" : ""}${low ? " clock--low" : ""}${
+        critical && running ? " clock--critical" : ""
+      }`}
+      role="timer"
+      aria-label={`${formatClock(ms)} left`}
+    >
+      <span className="num">{formatClock(ms)}</span>
+    </span>
+  );
+}
+
 function RacerCard({
   side,
   name,
@@ -779,6 +909,7 @@ function RacerCard({
   tag,
   away = false,
   reaction = null,
+  clock = null,
 }: {
   side: Side;
   name: string;
@@ -791,6 +922,7 @@ function RacerCard({
   tag: string | null;
   away?: boolean;
   reaction?: { id: number; text: string } | null;
+  clock?: ReactNode;
 }) {
   return (
     <div
@@ -833,6 +965,7 @@ function RacerCard({
           </motion.span>
         ) : null}
       </AnimatePresence>
+      {clock}
       <div className="racer__steps">
         <Ticker value={steps} className="racer__count num" />
         <span>{steps === 1 ? "step to go" : "steps to go"}</span>
@@ -896,7 +1029,7 @@ function ResultPanel({
   const names = online ? online.names : raceNames(match.setup);
   const loser = opponentOf(winner);
   const humanWon = online ? winner === online.you : !vsBot || winner === HUMAN;
-  const margin = match.resigned ? null : routes[loser];
+  const margin = match.resigned || match.timedOut ? null : routes[loser];
   const turns = useCountUp(Math.ceil(match.moves.length / 2));
   const marginShown = useCountUp(margin ?? 0);
   const elapsed = match.finishedAt && match.startedAt ? match.finishedAt - match.startedAt : null;
@@ -913,34 +1046,56 @@ function ResultPanel({
         : winner === online.you
           ? "You crossed first!"
           : `${opponentName} crossed first`;
-  const title = online
-    ? onlineTitle
-    : match.resigned
-      ? vsBot
-        ? "You resigned"
-        : `${names[match.resigned]} resigned`
-      : vsBot
-        ? winner === HUMAN
-          ? "You crossed first!"
-          : "The bot crossed first"
-        : `${names[winner]} wins!`;
-  const line = online
-    ? online.abandoned
-      ? "You win by forfeit."
+  const out = match.timedOut ?? null;
+  const you = online?.you ?? (vsBot ? HUMAN : null);
+  const timeTitle = !out
+    ? ""
+    : out === you
+      ? "Out of time"
+      : online
+        ? `${opponentName} ran out of time`
+        : vsBot
+          ? "The bot ran out of time"
+          : `${names[out]} ran out of time`;
+  const timeLine = !out
+    ? ""
+    : out === you
+      ? "Your clock hit zero. A longer time control gives you more room to think."
+      : you
+        ? "You win on time."
+        : `${names[winner]} wins on time.`;
+  const title = out
+    ? timeTitle
+    : online
+      ? onlineTitle
       : match.resigned
-        ? match.resigned === online.you
-          ? "Every racer has an off day. Run it back?"
-          : "You win by resignation."
-        : winner === online.you
-          ? `You won by ${plural(margin ?? 0, "step")}.`
-          : `${opponentName} won by ${plural(margin ?? 0, "step")}. One well-placed barricade could flip it.`
-    : match.resigned
-      ? "Every racer has an off day. Run it back?"
-      : vsBot
-        ? winner === HUMAN
-          ? `You beat ${LEVEL_LABEL[match.setup.level]} with ${plural(margin ?? 0, "step")} to spare.`
-          : `You were ${plural(routes[HUMAN], "step")} short. One well-placed barricade could flip it.`
-        : `${names[winner]} won by ${plural(margin ?? 0, "step")}.`;
+        ? vsBot
+          ? "You resigned"
+          : `${names[match.resigned]} resigned`
+        : vsBot
+          ? winner === HUMAN
+            ? "You crossed first!"
+            : "The bot crossed first"
+          : `${names[winner]} wins!`;
+  const line = out
+    ? timeLine
+    : online
+      ? online.abandoned
+        ? "You win by forfeit."
+        : match.resigned
+          ? match.resigned === online.you
+            ? "Every racer has an off day. Run it back?"
+            : "You win by resignation."
+          : winner === online.you
+            ? `You won by ${plural(margin ?? 0, "step")}.`
+            : `${opponentName} won by ${plural(margin ?? 0, "step")}. One well-placed barricade could flip it.`
+      : match.resigned
+        ? "Every racer has an off day. Run it back?"
+        : vsBot
+          ? winner === HUMAN
+            ? `You beat ${LEVEL_LABEL[match.setup.level]} with ${plural(margin ?? 0, "step")} to spare.`
+            : `You were ${plural(routes[HUMAN], "step")} short. One well-placed barricade could flip it.`
+          : `${names[winner]} won by ${plural(margin ?? 0, "step")}.`;
 
   const stats: Array<{ label: string; value: string }> = [
     { label: "Turns", value: String(turns) },

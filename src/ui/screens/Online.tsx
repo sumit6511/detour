@@ -109,6 +109,7 @@ export function OnlineScreen(props: OnlineScreenProps) {
     claim: () => void run(session.claim()),
     requestRematch: () => void run(session.rematch()),
     react: (text: Reaction) => void run(session.react(text)),
+    clock: () => session.clock(),
   };
 
   return (
@@ -228,7 +229,8 @@ function Lobby({
           <p className="hint">
             You'll play {yourSide === "south" ? "orange and move first" : "teal and move second"}.{" "}
             {game.setup.size}×{game.setup.size}, {game.setup.wallsEach} barricades each
-            {game.setup.roadworks ? ", with roadworks" : ""}.
+            {game.setup.roadworks ? ", with roadworks" : ""}
+            {game.setup.clock !== "off" ? `, ${game.setup.clock} clock` : ""}.
           </p>
         </div>
       </motion.section>

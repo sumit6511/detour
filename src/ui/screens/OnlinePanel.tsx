@@ -63,7 +63,7 @@ export function OnlinePanel({ options, onOnline, initialCode }: OnlinePanelProps
   };
 
   const typedCode = normaliseCode(code);
-  const board = { size: options.size, roadworks: options.roadworks };
+  const board = { size: options.size, roadworks: options.roadworks, clock: options.clock ?? "off" };
 
   if (!ready) {
     return (

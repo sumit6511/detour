@@ -1,7 +1,8 @@
 import type { DetourAction, Side } from "../engine/game";
 import type { BoardSize } from "../engine/match";
+import type { ClockPreset } from "../engine/clock";
 import { Emitter, type OnlineBackend, type OnlineSession, type Presence, type Readiness } from "./backend";
-import { applyMove, parseGame, type CreateOptions, type OnlineGame } from "./game";
+import { applyMove, gameClock, parseGame, type CreateOptions, type OnlineGame } from "./game";
 import type { ClientMessage, Reaction, ServerMessage } from "./protocol";
 
 type Outgoing = ClientMessage extends infer M ? (M extends { id: number } ? Omit<M, "id"> : never) : never;
@@ -87,7 +88,7 @@ export class ServerBackend implements OnlineBackend {
     return this.seatFrom(await this.request({ t: "join", code }, name));
   }
 
-  async quick(options: { size: BoardSize; roadworks: boolean }, name: string) {
+  async quick(options: { size: BoardSize; roadworks: boolean; clock: ClockPreset }, name: string) {
     return this.seatFrom(await this.request({ t: "quick", ...options }, name));
   }
 
@@ -237,6 +238,8 @@ class ServerSession implements OnlineSession {
   private reactions = new Emitter<{ side: Side; text: Reaction }>();
   private switches = new Emitter<OnlineSession>();
   private opponent: Presence = { here: null, since: null };
+  /** When this browser received the latest copy (the server says how far into the turn it was). */
+  private receivedAt = Date.now();
 
   constructor(
     readonly backend: ServerBackend,
@@ -270,10 +273,16 @@ class ServerSession implements OnlineSession {
     return { south: g.players.south?.name || "Player", north: g.players.north?.name || "Player" };
   }
 
+  clock() {
+    const g = this.latest;
+    return gameClock(g, g.turnElapsedMs + (Date.now() - this.receivedAt));
+  }
+
   async play(action: DetourAction) {
     // Show the move at once; the server's echo confirms it, or we put the board back.
     const before = this.latest;
-    const next = applyMove(before, this.you, action, Date.now());
+    const spent = before.turnElapsedMs + (Date.now() - this.receivedAt);
+    const next = applyMove(before, this.you, action, Date.now(), spent);
     if (typeof next === "string") throw new Error(next);
     this.update(next);
     try {
@@ -307,6 +316,7 @@ class ServerSession implements OnlineSession {
   // Called by the backend.
   update(game: OnlineGame) {
     this.latest = game;
+    this.receivedAt = Date.now();
     this.games.emit(game);
   }
   presence(p: Presence) {

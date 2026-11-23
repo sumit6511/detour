@@ -1,14 +1,15 @@
 import type { DetourAction, Side } from "../engine/game.js";
 import type { BoardSize } from "../engine/match.js";
+import type { ClockPreset } from "../engine/clock.js";
 import type { OnlineGame } from "./game.js";
 
 /** Messages a browser sends the game server. `id` pairs a request with its reply. */
 export type ClientMessage =
   | { t: "hello"; id: number; name: string; clientId: string }
-  | { t: "create"; id: number; size: BoardSize; roadworks: boolean; isPublic: boolean }
+  | { t: "create"; id: number; size: BoardSize; roadworks: boolean; clock: ClockPreset; isPublic: boolean }
   | { t: "join"; id: number; code: string }
   | { t: "resume"; id: number; code: string; token: string }
-  | { t: "quick"; id: number; size: BoardSize; roadworks: boolean }
+  | { t: "quick"; id: number; size: BoardSize; roadworks: boolean; clock: ClockPreset }
   | { t: "cancel"; id: number; code: string }
   | { t: "move"; id: number; code: string; ply: number; action: DetourAction }
   | { t: "resign"; id: number; code: string }

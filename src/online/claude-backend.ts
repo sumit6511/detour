@@ -1,10 +1,14 @@
 import type { DetourAction, Side } from "../engine/game";
 import { opponentOf } from "../engine/game";
 import type { BoardSize } from "../engine/match";
+import type { ClockPreset } from "../engine/clock";
 import { Emitter, type OnlineBackend, type OnlineSession, type Presence, type Readiness } from "./backend";
 import {
   applyMove,
+  gameClock,
   makeCode,
+  moverOf,
+  timeoutGame,
   newGame,
   parseGame,
   rematchGame,
@@ -72,6 +76,8 @@ export interface ClaudeRuntime {
 }
 
 const GAMES = "games";
+/** How long past zero an opponent's clock may read before this browser calls the race for time. */
+const FLAG_GRACE_MS = 3_000;
 
 /**
  * Online races hosted by the Claude page itself: each race is one shared `db` document that
@@ -152,11 +158,16 @@ export class ClaudeBackend implements OnlineBackend {
       status: "playing",
       updatedAt: this.now(),
     };
-    await ref.update({ players: joined.players, status: "playing", updatedAt: joined.updatedAt });
+    await ref.update({
+      players: joined.players,
+      status: "playing",
+      turnStartedAt: joined.updatedAt,
+      updatedAt: joined.updatedAt,
+    });
     return this.session(joined, me);
   }
 
-  async quick(options: { size: BoardSize; roadworks: boolean }) {
+  async quick(options: { size: BoardSize; roadworks: boolean; clock: ClockPreset }) {
     const me = this.requireMe();
     const found = await this.db
       .collection(GAMES)
@@ -167,7 +178,10 @@ export class ClaudeBackend implements OnlineBackend {
       .get();
     const fresh = found.docs
       .map((d) => parseGame(d.data()))
-      .filter((g): g is OnlineGame => !!g && g.setup.roadworks === options.roadworks && !sideOf(g, me))
+      .filter(
+        (g): g is OnlineGame =>
+          !!g && g.setup.roadworks === options.roadworks && g.setup.clock === options.clock && !sideOf(g, me),
+      )
       .filter((g) => this.now() - g.createdAt < 10 * 60_000)
       .sort((a, b) => a.createdAt - b.createdAt);
     for (const candidate of fresh) {
@@ -226,7 +240,12 @@ export class ClaudeBackend implements OnlineBackend {
 
 /** The stored document: the game plus two top-level copies quick match can filter on. */
 function toDoc(game: OnlineGame): Json {
-  return { ...game, size: game.setup.size, roadworks: game.setup.roadworks } as unknown as Json;
+  return {
+    ...game,
+    size: game.setup.size,
+    roadworks: game.setup.roadworks,
+    clock: game.setup.clock,
+  } as unknown as Json;
 }
 
 class ClaudeSession implements OnlineSession {
@@ -244,6 +263,15 @@ class ClaudeSession implements OnlineSession {
   private creating = false;
   private followed = false;
   private closed = false;
+  /**
+   * When this browser saw the current turn begin. Each player's thinking time is measured on
+   * their own computer only, so two machines with different clocks never disagree about it.
+   */
+  private turnSeenAt: number;
+  private seenMoves: number;
+  private seenStatus: OnlineGame["status"];
+  private flagTimer: ReturnType<typeof setInterval> | null = null;
+  private flagging = false;
 
   constructor(
     readonly backend: ClaudeBackend,
@@ -254,10 +282,24 @@ class ClaudeSession implements OnlineSession {
   ) {
     this.code = game.code;
     this.latest = game;
+    // Joining mid-race (a reload): the best estimate is the recorded start of the turn.
+    const now = backend.clock();
+    this.turnSeenAt = now - Math.min(Math.max(0, now - game.turnStartedAt), 10 * 60_000);
+    this.seenMoves = game.moves.length;
+    this.seenStatus = game.status;
     this.stopSnapshot = backend.ref(this.code).onSnapshot(
       (snap) => {
         const next = parseGame(snap.data());
         if (!next) return;
+        // A new turn (or the race just starting): start timing it from now.
+        if (
+          next.moves.length !== this.seenMoves ||
+          (next.status === "playing" && this.seenStatus !== "playing")
+        ) {
+          this.turnSeenAt = this.backend.clock();
+        }
+        this.seenMoves = next.moves.length;
+        this.seenStatus = next.status;
         this.latest = next;
         this.games.emit(next);
         void this.followRematch(next);
@@ -265,6 +307,34 @@ class ClaudeSession implements OnlineSession {
       () => this.presences.emit({ here: null, since: null }),
     );
     if (room) void this.joinRoom(room);
+    if (game.setup.clock !== "off") this.flagTimer = setInterval(() => void this.checkFlag(), 400);
+  }
+
+  clock() {
+    return gameClock(this.latest, this.backend.clock() - this.turnSeenAt);
+  }
+
+  /**
+   * Without a referee: your own browser ends the race the moment your clock hits zero, and your
+   * opponent's browser does it for you if yours has gone quiet for a few seconds past that.
+   */
+  private async checkFlag() {
+    const g = this.latest;
+    const times = this.clock();
+    if (!times || g.status !== "playing" || this.flagging) return;
+    const mover = moverOf(g);
+    const grace = mover === this.you ? 0 : FLAG_GRACE_MS;
+    if (times[mover] > -grace) return;
+    const next = timeoutGame(g, mover, this.backend.clock());
+    if (typeof next === "string") return;
+    this.flagging = true;
+    try {
+      this.latest = next;
+      this.games.emit(next);
+      await this.write({ timedOut: mover, status: "finished", updatedAt: next.updatedAt });
+    } finally {
+      this.flagging = false;
+    }
   }
 
   game() {
@@ -288,11 +358,19 @@ class ClaudeSession implements OnlineSession {
   }
 
   async play(action: DetourAction) {
-    const next = applyMove(this.latest, this.you, action, this.backend.clock());
+    const now = this.backend.clock();
+    const next = applyMove(this.latest, this.you, action, now, now - this.turnSeenAt);
     if (typeof next === "string") throw new Error(next);
+    this.turnSeenAt = now;
+    this.seenMoves = next.moves.length;
     this.latest = next;
     this.games.emit(next);
-    await this.write({ moves: next.moves, status: next.status, updatedAt: next.updatedAt });
+    await this.write({
+      moves: next.moves,
+      status: next.status,
+      turnStartedAt: next.turnStartedAt,
+      updatedAt: next.updatedAt,
+    });
   }
 
   async resign() {
@@ -335,6 +413,7 @@ class ClaudeSession implements OnlineSession {
   leave() {
     if (this.closed) return;
     this.closed = true;
+    if (this.flagTimer) clearInterval(this.flagTimer);
     this.stopSnapshot();
     for (const stop of this.roomStops) stop();
     void this.named?.leave().catch(() => {});

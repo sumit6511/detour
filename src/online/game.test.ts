@@ -3,6 +3,9 @@ import { createRng } from "../engine/rng.js";
 import {
   applyMove,
   cleanName,
+  gameClock,
+  OUT_OF_TIME,
+  timeoutGame,
   makeCode,
   newGame,
   normaliseCode,
@@ -18,7 +21,13 @@ const alice = { id: "u_alice", name: "Alice" };
 const bob = { id: "u_bob", name: "Bob" };
 
 function started(): OnlineGame {
-  const game = newGame("ABCDE", { size: 7, roadworks: false, isPublic: false }, alice, 1000, createRng(1));
+  const game = newGame(
+    "ABCDE",
+    { size: 7, roadworks: false, clock: "off", isPublic: false },
+    alice,
+    1000,
+    createRng(1),
+  );
   const open = game.players.south ? "north" : "south";
   return { ...game, players: { ...game.players, [open]: bob }, status: "playing" };
 }
@@ -40,7 +49,13 @@ describe("codes and names", () => {
 
 describe("game flow", () => {
   it("seats the host on a random side and starts open", () => {
-    const game = newGame("ABCDE", { size: 9, roadworks: true, isPublic: true }, alice, 5, createRng(9));
+    const game = newGame(
+      "ABCDE",
+      { size: 9, roadworks: true, clock: "off", isPublic: true },
+      alice,
+      5,
+      createRng(9),
+    );
     expect(game.status).toBe("open");
     expect(sideOf(game, "u_alice")).not.toBeNull();
     expect(game.setup.wallsEach).toBe(10);
@@ -67,6 +82,29 @@ describe("game flow", () => {
     expect(next.players.south).toEqual(game.players.north);
     expect(next.players.north).toEqual(game.players.south);
     expect(next.status).toBe("playing");
+  });
+});
+
+describe("online clocks", () => {
+  it("charges each move's time, refuses a move after zero, and keeps times through parsing", () => {
+    const base = newGame(
+      "ABCDE",
+      { size: 7, roadworks: false, clock: "3+2", isPublic: false },
+      alice,
+      0,
+      createRng(1),
+    );
+    const open = base.players.south ? "north" : "south";
+    let game: OnlineGame = { ...base, players: { ...base.players, [open]: bob }, status: "playing" };
+    game = applyMove(game, "south", { type: "step", row: 5, col: 3 }, 9_000, 9_000) as OnlineGame;
+    expect(gameClock(game, 4_000)).toEqual({ south: 173_000, north: 176_000 });
+    expect(applyMove(game, "north", { type: "step", row: 1, col: 3 }, 999_999, 180_000)).toBe(OUT_OF_TIME);
+    const out = timeoutGame(game, "north", 200_000) as OnlineGame;
+    expect(winnerOfGame(out)).toBe("south");
+    const parsed = parseGame(JSON.parse(JSON.stringify(out)))!;
+    expect(parsed.moves[0]!.spentMs).toBe(9_000);
+    expect(parsed.timedOut).toBe("north");
+    expect(parsed.status).toBe("finished");
   });
 });
 

@@ -54,7 +54,13 @@ describe("game server", () => {
     const alice = await client(port, "Alice");
     const bob = await client(port, "Bob");
 
-    const created = await alice.request({ t: "create", size: 7, roadworks: false, isPublic: false });
+    const created = await alice.request({
+      t: "create",
+      size: 7,
+      roadworks: false,
+      clock: "off",
+      isPublic: false,
+    });
     expect(created.t).toBe("seat");
     if (created.t !== "seat") return;
     const code = created.code;
@@ -118,16 +124,16 @@ describe("game server", () => {
     const carolAgain = await client(port, "Carol", "Carol"); // same browser, second tab
     const dave = await client(port, "Dave");
 
-    const waiting = await carol.request({ t: "quick", size: 9, roadworks: true });
+    const waiting = await carol.request({ t: "quick", size: 9, roadworks: true, clock: "off" });
     if (waiting.t !== "seat") throw new Error("expected a seat");
     expect(waiting.game.status).toBe("open");
 
-    const sameBrowser = await carolAgain.request({ t: "quick", size: 9, roadworks: true });
+    const sameBrowser = await carolAgain.request({ t: "quick", size: 9, roadworks: true, clock: "off" });
     if (sameBrowser.t !== "seat") throw new Error("expected a seat");
     expect(sameBrowser.code).not.toBe(waiting.code);
     await carolAgain.request({ t: "cancel", code: sameBrowser.code });
 
-    const matched = await dave.request({ t: "quick", size: 9, roadworks: true });
+    const matched = await dave.request({ t: "quick", size: 9, roadworks: true, clock: "off" });
     if (matched.t !== "seat") throw new Error("expected a seat");
     expect(matched.code).toBe(waiting.code);
     expect(matched.game.status).toBe("playing");
@@ -141,7 +147,13 @@ describe("game server", () => {
   it("lets a player reconnect to their seat with its token, and tells the opponent", async () => {
     const erin = await client(port, "Erin");
     const frank = await client(port, "Frank");
-    const seat = await erin.request({ t: "create", size: 7, roadworks: false, isPublic: false });
+    const seat = await erin.request({
+      t: "create",
+      size: 7,
+      roadworks: false,
+      clock: "off",
+      isPublic: false,
+    });
     if (seat.t !== "seat") throw new Error("expected a seat");
     await frank.request({ t: "join", code: seat.code });
 
@@ -175,7 +187,7 @@ describe("hub forfeits", () => {
     };
     const a = conn("a");
     const b = conn("b");
-    hub.create(a, { size: 7, roadworks: false, isPublic: false }, 1);
+    hub.create(a, { size: 7, roadworks: false, clock: "off", isPublic: false }, 1);
     const code = [...a.seats.keys()][0]!;
     hub.join(b, code, 1);
 
@@ -191,5 +203,70 @@ describe("hub forfeits", () => {
     expect(game.resigned).toBe(
       b.seats.size === 0 ? (a.seats.get(code) === "south" ? "north" : "south") : null,
     );
+  });
+});
+
+describe("hub clocks", () => {
+  it("times moves on the server, flags a player who runs out, and refuses late moves", () => {
+    let now = 5_000_000;
+    const hub = new Hub(() => now);
+    const conn = (clientId: string): Conn & { log: ServerMessage[] } => {
+      const log: ServerMessage[] = [];
+      return { clientId, name: clientId, seats: new Map(), send: (m) => log.push(m), log };
+    };
+    const a = conn("a");
+    const b = conn("b");
+    hub.create(a, { size: 7, roadworks: false, clock: "3+2", isPublic: false }, 1);
+    const code = [...a.seats.keys()][0]!;
+    now += 60_000; // a minute in the lobby doesn't count
+    hub.join(b, code, 1);
+    const south = a.seats.get(code) === "south" ? a : b;
+    const north = south === a ? b : a;
+
+    now += 10_000;
+    hub.move(south, code, 0, { type: "step", row: 5, col: 3 });
+    expect(hub.game(code)!.moves[0]!.spentMs).toBe(10_000);
+
+    // Copies sent mid-turn carry how far into the turn they are.
+    now += 4_000;
+    hub.react(north, code, "Good luck");
+    hub.tickClocks();
+    expect(hub.game(code)!.status).toBe("playing");
+
+    now += 180_000; // north thinks too long
+    expect(() => hub.move(north, code, 1, { type: "step", row: 1, col: 3 })).toThrow("Your time ran out.");
+    const over = hub.game(code)!;
+    expect(over.status).toBe("finished");
+    expect(over.timedOut).toBe("north");
+  });
+
+  it("flags on the clock tick even if the player never moves again", () => {
+    let now = 0;
+    const hub = new Hub(() => now);
+    const log: ServerMessage[] = [];
+    const mk = (id: string): Conn => ({ clientId: id, name: id, seats: new Map(), send: (m) => log.push(m) });
+    const a = mk("a");
+    const b = mk("b");
+    hub.create(a, { size: 7, roadworks: false, clock: "3+2", isPublic: false }, 1);
+    const code = [...a.seats.keys()][0]!;
+    hub.join(b, code, 1);
+    now += 179_999;
+    hub.tickClocks();
+    expect(hub.game(code)!.status).toBe("playing");
+    now += 2;
+    hub.tickClocks();
+    expect(hub.game(code)!.timedOut).toBe("south");
+    const sent = log.filter((m): m is Extract<ServerMessage, { t: "game" }> => m.t === "game").at(-1)!;
+    expect(sent.game.status).toBe("finished");
+  });
+
+  it("only pairs quick-match players who chose the same clock", () => {
+    const hub = new Hub();
+    const mk = (id: string): Conn => ({ clientId: id, name: id, seats: new Map(), send: () => {} });
+    const a = mk("a");
+    const b = mk("b");
+    hub.quick(a, { size: 7, roadworks: false, clock: "5+3" }, 1);
+    hub.quick(b, { size: 7, roadworks: false, clock: "off" }, 1);
+    expect([...a.seats.keys()][0]).not.toBe([...b.seats.keys()][0]);
   });
 });

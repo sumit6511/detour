@@ -228,7 +228,7 @@ describe("Claude-hosted online play", () => {
     const alice = (await ClaudeBackend.connect(runtime(store, rooms, "u_alice"), clock))!;
     const bob = (await ClaudeBackend.connect(runtime(store, rooms, "u_bob"), clock))!;
 
-    const a = await alice.create({ size: 7, roadworks: false, isPublic: false });
+    const a = await alice.create({ size: 7, roadworks: false, clock: "off", isPublic: false });
     const aState = track(a);
     expect(a.game().status).toBe("open");
 
@@ -275,17 +275,49 @@ describe("Claude-hosted online play", () => {
     await tick();
   });
 
+  it("runs clocks on each player's own computer and calls the race when one runs out", async () => {
+    let now = 2_000_000;
+    const clock = () => now;
+    const store = new FakeStore(clock);
+    const rooms = new FakeRooms();
+    const alice = (await ClaudeBackend.connect(runtime(store, rooms, "u_alice"), clock))!;
+    const bob = (await ClaudeBackend.connect(runtime(store, rooms, "u_bob"), clock))!;
+    const a = await alice.create({ size: 7, roadworks: false, clock: "3+2", isPublic: false });
+    const aState = track(a);
+    const b = await bob.join(a.code);
+    const bState = track(b);
+    await waitFor(() => aState.game.status === "playing");
+    const [south, southState, north, northState] =
+      a.you === "south" ? [a, aState, b, bState] : [b, bState, a, aState];
+
+    now += 12_000;
+    await south.play({ type: "step", row: 5, col: 3 });
+    expect(south.game().moves[0]!.spentMs).toBe(12_000);
+    await waitFor(() => northState.game.moves.length === 1);
+    expect(south.clock()!.south).toBe(170_000);
+
+    // North stops answering. South's browser waits a short grace past zero, then calls it.
+    north.leave();
+    now += 180_000;
+    await new Promise((r) => setTimeout(r, 500));
+    expect(southState.game.status).toBe("playing");
+    now += 3_500;
+    await waitFor(() => southState.game.status === "finished", 2000);
+    expect(southState.game.timedOut).toBe("north");
+    south.leave();
+  });
+
   it("pairs two people through quick match", async () => {
     const store = new FakeStore(Date.now);
     const rooms = new FakeRooms();
     const carol = (await ClaudeBackend.connect(runtime(store, rooms, "u_carol")))!;
     const dave = (await ClaudeBackend.connect(runtime(store, rooms, "u_dave")))!;
-    const waiting = await carol.quick({ size: 9, roadworks: false });
+    const waiting = await carol.quick({ size: 9, roadworks: false, clock: "off" });
     expect(waiting.game().status).toBe("open");
-    const again = await carol.quick({ size: 9, roadworks: false }); // never joins your own lobby
+    const again = await carol.quick({ size: 9, roadworks: false, clock: "off" }); // never joins your own lobby
     expect(again.code).not.toBe(waiting.code);
     await again.cancel();
-    const matched = await dave.quick({ size: 9, roadworks: false });
+    const matched = await dave.quick({ size: 9, roadworks: false, clock: "off" });
     expect(matched.code).toBe(waiting.code);
     expect(matched.game().status).toBe("playing");
     waiting.leave();

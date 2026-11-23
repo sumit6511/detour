@@ -2152,3 +2152,50 @@ kbd {
     animation: none;
   }
 }
+
+/* ---------------------------------------------------------------- Clocks */
+
+.clock {
+  position: absolute;
+  top: 9px;
+  right: 10px;
+  padding: 3px 8px;
+  border-radius: 7px;
+  background: var(--surface-2);
+  color: var(--ink-soft);
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.2;
+  transition:
+    background-color 200ms ease,
+    color 200ms ease;
+}
+
+.clock--running {
+  background: var(--ink);
+  color: var(--bg);
+}
+
+.clock--low {
+  color: var(--bad);
+}
+
+.clock--low.clock--running {
+  background: var(--bad);
+  color: #fff;
+}
+
+.clock--critical {
+  animation: clock-pulse 1s ease-in-out infinite;
+}
+
+@keyframes clock-pulse {
+  50% {
+    transform: scale(1.08);
+  }
+}
+
+/* Make room for the clock beside the racer's name; a reaction bubble covers it briefly. */
+.racer:has(.clock) .racer__head {
+  padding-right: 64px;
+}

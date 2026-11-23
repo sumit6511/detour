@@ -12,7 +12,7 @@ async function player(browser: Browser, name: string, path = "/") {
   });
   await page.goto(path);
   await page.locator("label", { hasText: "Online" }).click();
-  await page.locator("label", { hasText: "Off" }).click(); // no roadworks: predictable moves
+  await page.locator("label:has(#roadworks-off)").click(); // no roadworks: predictable moves
   await page.getByLabel("Your name").fill(name);
   return { page, close: () => context.close() };
 }
@@ -92,4 +92,34 @@ test("quick match pairs two strangers on the same board", async ({ browser }) =>
   }
   await carol.close();
   await dave.close();
+});
+
+test("timed online race: both players see the same clock running for whoever is to move", async ({
+  browser,
+}) => {
+  const erin = await player(browser, "Erin");
+  await erin.page.locator("label", { hasText: "3 min" }).click();
+  await erin.page.getByRole("button", { name: "Invite a friend" }).click();
+  await expect(erin.page.locator(".lobby")).toContainText("3+2 clock");
+  const label = await erin.page.locator(".code").getAttribute("aria-label");
+  const code = label!.replace("Race code ", "").replace(/ /g, "");
+
+  const frank = await player(browser, "Frank", `/#join-${code.toLowerCase()}`);
+  await frank.page.getByRole("button", { name: "Join", exact: true }).click();
+
+  for (const page of [erin.page, frank.page]) {
+    await expect(page.locator(".clock")).toHaveCount(2);
+    await expect(page.locator(".clock--running")).toHaveCount(1);
+    await expect(page.locator(".bar__meta")).toContainText("3+2");
+  }
+  // The running clock belongs to the same racer on both screens: orange moves first.
+  const orangeRunning = (page: Page) =>
+    page
+      .locator(".racer", { has: page.locator(".clock--running") })
+      .evaluate((el) => el.getAttribute("style"));
+  expect(await orangeRunning(erin.page)).toContain("--south");
+  expect(await orangeRunning(frank.page)).toContain("--south");
+
+  await erin.close();
+  await frank.close();
 });

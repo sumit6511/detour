@@ -3,6 +3,7 @@ import { createServer, type IncomingMessage, type Server } from "node:http";
 import { extname, join, normalize, resolve } from "node:path";
 import { WebSocketServer, type WebSocket } from "ws";
 import { cleanName } from "../src/online/game.js";
+import { isClockPreset } from "../src/engine/clock.js";
 import type { ClientMessage, ServerMessage } from "../src/online/protocol.js";
 import { Hub, HubError, type Conn } from "./hub.js";
 
@@ -123,6 +124,7 @@ export function startServer(
   });
 
   const sweeper = setInterval(() => hub.sweep(), 60_000);
+  const clocks = setInterval(() => hub.tickClocks(), 200);
 
   return new Promise((done) => {
     server.listen(options.port ?? 8787, () => {
@@ -135,6 +137,7 @@ export function startServer(
         close: () =>
           new Promise<void>((closed) => {
             clearInterval(sweeper);
+            clearInterval(clocks);
             for (const client of wss.clients) client.terminate();
             wss.close();
             server.close(() => closed());
@@ -161,12 +164,21 @@ function handle(hub: Hub, conn: Conn, m: ClientMessage) {
       if (!isSize(m.size)) throw new HubError("Pick a board size.");
       return hub.create(
         conn,
-        { size: m.size, roadworks: m.roadworks === true, isPublic: m.isPublic === true },
+        {
+          size: m.size,
+          roadworks: m.roadworks === true,
+          clock: isClockPreset(m.clock) ? m.clock : "off",
+          isPublic: m.isPublic === true,
+        },
         m.id,
       );
     case "quick":
       if (!isSize(m.size)) throw new HubError("Pick a board size.");
-      return hub.quick(conn, { size: m.size, roadworks: m.roadworks === true }, m.id);
+      return hub.quick(
+        conn,
+        { size: m.size, roadworks: m.roadworks === true, clock: isClockPreset(m.clock) ? m.clock : "off" },
+        m.id,
+      );
     case "join":
       if (!isCode(m.code)) throw new HubError("That code doesn't look right.");
       return hub.join(conn, m.code, m.id);

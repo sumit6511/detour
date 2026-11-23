@@ -134,6 +134,10 @@ export const sfx = {
   undo() {
     tone(500, 0.09, { type: "triangle", gain: 0.16, slideTo: 330 });
   },
+  /** One tick a second in the last ten seconds of your own clock. */
+  tick() {
+    tone(1500, 0.03, { type: "square", gain: 0.05 });
+  },
   click() {
     tone(900, 0.035, { type: "triangle", gain: 0.08 });
   },

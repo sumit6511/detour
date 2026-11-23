@@ -2,8 +2,13 @@ import { randomBytes } from "node:crypto";
 import type { DetourAction, Side } from "../src/engine/game.js";
 import { opponentOf } from "../src/engine/game.js";
 import type { BoardSize } from "../src/engine/match.js";
+import type { ClockPreset } from "../src/engine/clock.js";
 import {
   applyMove,
+  gameClock,
+  moverOf,
+  OUT_OF_TIME,
+  timeoutGame,
   makeCode,
   newGame,
   rematchGame,
@@ -55,7 +60,11 @@ export class Hub {
     return this.rooms.get(code)?.game;
   }
 
-  create(conn: Conn, options: { size: BoardSize; roadworks: boolean; isPublic: boolean }, id: number) {
+  create(
+    conn: Conn,
+    options: { size: BoardSize; roadworks: boolean; clock: ClockPreset; isPublic: boolean },
+    id: number,
+  ) {
     const code = this.freshCode();
     const seatId = token(8);
     const game = newGame(code, options, { id: seatId, name: conn.name }, this.now(), this.random);
@@ -85,6 +94,8 @@ export class Hub {
       ...room.game,
       players: { ...room.game.players, [open]: { id: token(8), name: conn.name } },
       status: "playing",
+      // The clock starts when the race does, not when the lobby opened.
+      turnStartedAt: this.now(),
       updatedAt: this.now(),
     };
     this.seat(room, open, conn, id);
@@ -98,7 +109,7 @@ export class Hub {
     this.seat(room, side, conn, id);
   }
 
-  quick(conn: Conn, options: { size: BoardSize; roadworks: boolean }, id: number) {
+  quick(conn: Conn, options: { size: BoardSize; roadworks: boolean; clock: ClockPreset }, id: number) {
     const now = this.now();
     for (const room of this.rooms.values()) {
       const g = room.game;
@@ -106,7 +117,8 @@ export class Hub {
         g.status !== "open" ||
         !g.isPublic ||
         g.setup.size !== options.size ||
-        g.setup.roadworks !== options.roadworks
+        g.setup.roadworks !== options.roadworks ||
+        g.setup.clock !== options.clock
       )
         continue;
       const hostSide: Side = g.players.south ? "south" : "north";
@@ -132,8 +144,33 @@ export class Hub {
     const { room, side } = this.mine(conn, code);
     // A stale or repeated submit (double click, retry after a reconnect) is refused, not replayed.
     if (ply !== room.game.moves.length) throw new HubError("The board moved on. Refreshing.");
-    const next = applyMove(room.game, side, action, this.now());
+    const now = this.now();
+    // The server's own clock is the only one that counts for a move's time.
+    const next = applyMove(room.game, side, action, now, now - room.game.turnStartedAt);
+    if (next === OUT_OF_TIME) {
+      this.flag(room, side, now);
+      throw new HubError(next);
+    }
     if (typeof next === "string") throw new HubError(next);
+    room.game = next;
+    this.broadcast(room, { t: "game", game: room.game });
+  }
+
+  /** Ends any timed race whose mover has run out of time. The server calls this a few times a second. */
+  tickClocks() {
+    const now = this.now();
+    for (const room of this.rooms.values()) {
+      const g = room.game;
+      if (g.status !== "playing" || g.setup.clock === "off") continue;
+      const times = gameClock(g, now - g.turnStartedAt);
+      const mover = moverOf(g);
+      if (times && times[mover] <= 0) this.flag(room, mover, now);
+    }
+  }
+
+  private flag(room: Room, side: Side, now: number) {
+    const next = timeoutGame(room.game, side, now);
+    if (typeof next === "string") return;
     room.game = next;
     this.broadcast(room, { t: "game", game: room.game });
   }
@@ -232,7 +269,7 @@ export class Hub {
     conn.seats.set(code, side);
     const wasAway = room.awaySince[side] !== null;
     room.awaySince[side] = null;
-    conn.send({ t: "seat", id: id ?? 0, code, side, token: room.tokens[side]!, game: room.game });
+    conn.send({ t: "seat", id: id ?? 0, code, side, token: room.tokens[side]!, game: this.stamp(room.game) });
     // Tell the newcomer whether their opponent is here, and the opponent that they're back.
     const other = opponentOf(side);
     if (room.game.players[other]) {
@@ -259,7 +296,14 @@ export class Hub {
   }
 
   private broadcast(room: Room, message: ServerMessage) {
-    for (const side of ["south", "north"] as Side[]) for (const c of room.conns[side]) c.send(message);
+    const stamped = message.t === "game" ? { ...message, game: this.stamp(room.game) } : message;
+    for (const side of ["south", "north"] as Side[]) for (const c of room.conns[side]) c.send(stamped);
+  }
+
+  /** A copy of the game that says how far into the current turn we are right now. */
+  private stamp(game: OnlineGame): OnlineGame {
+    if (game.status !== "playing" || game.setup.clock === "off") return game;
+    return { ...game, turnElapsedMs: Math.max(0, this.now() - game.turnStartedAt) };
   }
 
   private room(code: string): Room {

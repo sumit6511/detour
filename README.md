@@ -47,6 +47,26 @@ against anyone.
 - **Settings:** sound, route lines, board coordinates, and a light/dark/system theme.
 - An illustrated How to Play and an installable web-app manifest.
 
+## Clocks
+
+Pick a time control in the menu: **Off**, **3 min** (+2 s a move), **5 min** (+3 s) or **10 min**
+(+5 s). Each racer has that much thinking time for the whole race and gets the bonus back after
+every move they make. If your clock reaches zero, you lose. Clocks turn red in the last 20
+seconds, show tenths, and tick audibly in your last 10.
+
+- **Against the bot or a friend on one screen:** the clock runs only while the race is on screen,
+  and pauses when you go back to the menu or switch tabs. Timed races have no undo, since undo
+  would hand time back.
+- **Online, on the Detour server:** the server keeps the official time. It times each move
+  itself and ends the race the moment a clock runs out. Every copy of the game it sends says
+  how far into the current turn it is, so each browser counts down without relying on its own
+  clock matching the server's.
+- **Online, on a Claude page:** with no server, each player's thinking time is measured on their
+  own computer, so two machines' clocks never need to agree. Your browser ends the race as soon
+  as your own clock hits zero. If it has gone quiet, your opponent's browser calls the race once
+  your clock is three seconds past zero.
+- Quick match only pairs players who chose the same time control.
+
 ## Online play
 
 Pick **Online** in the menu, then:

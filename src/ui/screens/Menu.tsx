@@ -17,6 +17,7 @@ import { viewOfMatch } from "../board/view";
 import { Segmented } from "../components/Controls";
 import { DetourArrow, IconHelp, IconPlay, IconSettings } from "../icons";
 import { LEVEL_LABEL, LEVEL_NOTE } from "../labels";
+import type { ClockPreset } from "../../engine/clock";
 import type { OnlineSession } from "../../online/backend";
 import { OnlinePanel } from "./OnlinePanel";
 
@@ -196,6 +197,27 @@ export function Menu({
               />
               <p className="hint">
                 Fixed concrete blocks in mirror-image pairs, so every layout is fair to both racers.
+              </p>
+            </div>
+
+            <div className="field">
+              <span className="eyebrow">Clock</span>
+              <Segmented<ClockPreset>
+                name="clock"
+                label="Clock"
+                value={options.clock ?? "off"}
+                onChange={(v) => set("clock", v)}
+                choices={[
+                  { value: "off", label: "Off" },
+                  { value: "3+2", label: "3 min", note: "+2s a move" },
+                  { value: "5+3", label: "5 min", note: "+3s a move" },
+                  { value: "10+5", label: "10 min", note: "+5s a move" },
+                ]}
+              />
+              <p className="hint">
+                {(options.clock ?? "off") === "off"
+                  ? "No time limit. Take as long as you like."
+                  : "Each racer gets this much thinking time for the whole race, plus a little back after every move. Run out and you lose."}
               </p>
             </div>
 
