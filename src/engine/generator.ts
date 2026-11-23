@@ -4,7 +4,11 @@ import { goalRow, startPosition } from "./game.js";
 
 /** The same wall turned 180° about the board's centre, which swaps the two racers' views. */
 export function rotateWall(wall: Wall, size: number): Wall {
-  return { orientation: wall.orientation, row: size - 2 - wall.row, col: size - 2 - wall.col };
+  return {
+    orientation: wall.orientation,
+    row: size - 2 - wall.row,
+    col: size - 2 - wall.col,
+  };
 }
 
 /**

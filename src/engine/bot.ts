@@ -110,8 +110,7 @@ function bestStep(state: DetourState, side: Side, seed: number, turn: number) {
       // seeded coin flip so ties don't always resolve the same way.
       const spacing = manhattan(best, them) - manhattan(step, them);
       const flip =
-        tieBreak(seed, turn, `${step.row}-${step.col}`) <
-        tieBreak(seed, turn, `${best.row}-${best.col}`);
+        tieBreak(seed, turn, `${step.row}-${step.col}`) < tieBreak(seed, turn, `${best.row}-${best.col}`);
       if (spacing > 0 || (spacing === 0 && flip)) best = step;
     }
   }
@@ -245,19 +244,18 @@ const HARD_WALL_CANDIDATES = 10;
  * in the race. Seeing one reply ahead lets it hold walls back until they matter and avoid
  * walls that hand the opponent a shortcut.
  */
-export function searchAction(
-  state: DetourState,
-  side: Side,
-  seed: number,
-  turn: number,
-): DetourAction {
+export function searchAction(state: DetourState, side: Side, seed: number, turn: number): DetourAction {
   const other = opponentOf(side);
   const myGoal = goalRow(state.size, side);
   const steps = state.grid.pawnMoves(state.pawns[side], state.pawns[other]);
   const winning = steps.find((step) => step.row === myGoal);
   if (winning) return { type: "step", row: winning.row, col: winning.col };
 
-  const candidates: DetourAction[] = steps.map((s) => ({ type: "step", row: s.row, col: s.col }));
+  const candidates: DetourAction[] = steps.map((s) => ({
+    type: "step",
+    row: s.row,
+    col: s.col,
+  }));
   if (state.wallsLeft[side] > 0) {
     const myDistance = state.grid.distanceTo(state.pawns[side], myGoal);
     const theirDistance = state.grid.distanceTo(state.pawns[other], goalRow(state.size, other));

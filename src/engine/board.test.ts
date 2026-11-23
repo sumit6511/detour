@@ -71,10 +71,7 @@ describe("WallGrid placement", () => {
 describe("WallGrid pawn moves", () => {
   it("steps orthogonally and never through walls or off the board", () => {
     const grid = new WallGrid(7, [{ orientation: "h", row: 5, col: 2 }]);
-    expect(sortCells(grid.pawnMoves({ row: 6, col: 3 }, { row: 0, col: 3 }))).toEqual([
-      "6,2",
-      "6,4",
-    ]);
+    expect(sortCells(grid.pawnMoves({ row: 6, col: 3 }, { row: 0, col: 3 }))).toEqual(["6,2", "6,4"]);
   });
 
   it("jumps straight over an adjacent pawn", () => {
@@ -111,10 +108,6 @@ describe("WallGrid pawn moves", () => {
 
   it("never jumps across a wall between the two pawns", () => {
     const grid = new WallGrid(7, [{ orientation: "h", row: 3, col: 3 }]); // between (3,3) and (4,3)
-    expect(sortCells(grid.pawnMoves({ row: 4, col: 3 }, { row: 3, col: 3 }))).toEqual([
-      "4,2",
-      "4,4",
-      "5,3",
-    ]);
+    expect(sortCells(grid.pawnMoves({ row: 4, col: 3 }, { row: 3, col: 3 }))).toEqual(["4,2", "4,4", "5,3"]);
   });
 });

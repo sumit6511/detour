@@ -1,0 +1,10 @@
+{
+  "name": "Detour",
+  "short_name": "Detour",
+  "description": "A wall-placing race game. Beat the bot, or a friend, to the far side of the board.",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#0d1115",
+  "theme_color": "#ee7a14",
+  "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}

@@ -47,6 +47,13 @@ export interface Match {
   setup: MatchSetup;
   moves: MatchMove[];
   resigned: Side | null;
+  /** Wall-clock bookkeeping for the results screen (milliseconds since the epoch). */
+  startedAt?: number;
+  finishedAt?: number;
+  /** Hints asked for during the race. */
+  hints?: number;
+  /** Set once a finished race against the bot has been counted in the player's record. */
+  recorded?: boolean;
 }
 
 /** South (bottom) is always the human in bot mode, and always moves first. */
@@ -65,6 +72,8 @@ export function createMatch(options: MatchOptions, seed = Math.floor(Math.random
     },
     moves: [],
     resigned: null,
+    startedAt: Date.now(),
+    hints: 0,
   };
 }
 

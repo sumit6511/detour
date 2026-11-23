@@ -42,7 +42,10 @@ export function createState(setup: DetourSetup): DetourState {
   return {
     size: setup.size,
     grid: new WallGrid(setup.size, setup.stones),
-    pawns: { south: startPosition(setup.size, "south"), north: startPosition(setup.size, "north") },
+    pawns: {
+      south: startPosition(setup.size, "south"),
+      north: startPosition(setup.size, "north"),
+    },
     wallsLeft: { south: setup.wallsEach, north: setup.wallsEach },
     owners,
     winner: null,
@@ -77,7 +80,11 @@ export function applyAction(state: DetourState, side: Side, action: DetourAction
     if (action.row === goalRow(state.size, side)) state.winner = side;
     return;
   }
-  const wall: Wall = { orientation: action.orientation, row: action.row, col: action.col };
+  const wall: Wall = {
+    orientation: action.orientation,
+    row: action.row,
+    col: action.col,
+  };
   state.grid.place(wall);
   state.owners.set(wallKey(wall), side);
   state.wallsLeft[side]--;

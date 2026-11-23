@@ -2,7 +2,13 @@
  * Balance check: plays each bot level against scripted opponents of different strength over
  * many random boards and prints the opponent's win rate. Run with `npm run sim -- [games] [size]`.
  */
-import { applyAction, createState, isLegalAction, type DetourAction, type DetourState } from "../src/engine/game.ts";
+import {
+  applyAction,
+  createState,
+  isLegalAction,
+  type DetourAction,
+  type DetourState,
+} from "../src/engine/game.ts";
 import { botAction, greedyAction, POLICIES, type BotLevel } from "../src/engine/bot.ts";
 import { generateStones } from "../src/engine/generator.ts";
 import { createRng, randInt } from "../src/engine/rng.ts";
@@ -17,7 +23,13 @@ const walker: Opponent = (state) => {
 };
 // Walls only when one clearly pays off right now: a rough stand-in for a casual human.
 const casual: Opponent = (state, turn) =>
-  greedyAction(state, "south", 4242, turn, { ...POLICIES.medium, wallOnTieWhenBehind: false, bigWallEdge: 99, lookahead: 0, wander: 0 });
+  greedyAction(state, "south", 4242, turn, {
+    ...POLICIES.medium,
+    wallOnTieWhenBehind: false,
+    bigWallEdge: 99,
+    lookahead: 0,
+    wander: 0,
+  });
 const medium: Opponent = (state, turn) => botAction(state, "south", "medium", 999, turn);
 const hard: Opponent = (state, turn) => botAction(state, "south", "hard", 999, turn);
 
@@ -39,11 +51,13 @@ for (const level of levels) {
       const seed = randInt(rng, 0, 2 ** 31);
       for (let turn = 0; turn < 150 && !state.winner; turn++) {
         const mine = opponent(state, turn);
-        if (!isLegalAction(state, "south", mine)) throw new Error(`illegal player move ${JSON.stringify(mine)}`);
+        if (!isLegalAction(state, "south", mine))
+          throw new Error(`illegal player move ${JSON.stringify(mine)}`);
         applyAction(state, "south", mine);
         if (state.winner) break;
         const reply = botAction(state, "north", level, seed, turn);
-        if (!isLegalAction(state, "north", reply)) throw new Error(`illegal bot move ${JSON.stringify(reply)}`);
+        if (!isLegalAction(state, "north", reply))
+          throw new Error(`illegal bot move ${JSON.stringify(reply)}`);
         applyAction(state, "north", reply);
       }
       if (state.winner === "south") wins++;
