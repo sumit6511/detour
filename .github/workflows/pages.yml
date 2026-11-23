@@ -31,6 +31,8 @@ jobs:
         env:
           # Point the game at your deployed Detour server to enable online play (optional).
           VITE_SERVER_URL: ${{ vars.DETOUR_SERVER_URL }}
+          # Without one, Pages has no server behind it: build with online play switched off.
+          VITE_ONLINE: ${{ vars.DETOUR_SERVER_URL && 'on' || 'off' }}
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

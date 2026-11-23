@@ -23,7 +23,8 @@ export function onlineBackend(): Promise<BackendChoice> {
     if (url) return { backend: new ServerBackend(url) };
     return {
       backend: null,
-      reason: "This copy of Detour isn't connected to a game server. Open the hosted version to play online.",
+      reason:
+        "This site doesn't have a game server, so online play is off here. You can still race the bot, or a friend on this screen.",
     };
   })();
   return choice;

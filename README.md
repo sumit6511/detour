@@ -106,12 +106,13 @@ npm run dev            # game on :5173 and game server on :8787 (/ws is proxied)
 npm run build && npm run build:server && npm start   # production, on $PORT (default 8787)
 ```
 
-| Variable          | Meaning                                                                                          |
-| ----------------- | ------------------------------------------------------------------------------------------------ |
-| `PORT`            | Port for the game and the socket (default 8787)                                                  |
-| `STATIC_DIR`      | Folder of the built game to serve (default `dist`)                                               |
-| `ALLOWED_ORIGINS` | Comma-separated origins allowed to open a socket (default: any)                                  |
-| `VITE_SERVER_URL` | Build-time: socket address when the game is hosted elsewhere, e.g. `wss://detour.example.com/ws` |
+| Variable          | Meaning                                                                                                       |
+| ----------------- | ------------------------------------------------------------------------------------------------------------- |
+| `PORT`            | Port for the game and the socket (default 8787)                                                               |
+| `STATIC_DIR`      | Folder of the built game to serve (default `dist`)                                                            |
+| `ALLOWED_ORIGINS` | Comma-separated origins allowed to open a socket (default: any)                                               |
+| `VITE_ONLINE`     | Build-time: `off` builds the game with online play switched off (used for GitHub Pages when no server is set) |
+| `VITE_SERVER_URL` | Build-time: socket address when the game is hosted elsewhere, e.g. `wss://detour.example.com/ws`              |
 
 The repository includes a `Dockerfile` and a Render blueprint (`render.yaml`). Either gives you
 one service with the game and online play at a single URL; `/healthz` answers for health checks.

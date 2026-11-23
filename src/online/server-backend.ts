@@ -42,8 +42,16 @@ function clientId(): string {
 export function serverUrl(): string | null {
   const configured = import.meta.env.VITE_SERVER_URL as string | undefined;
   if (configured) return configured;
+  // A static build with no server behind it (GitHub Pages and the like) turns online play off.
+  if (import.meta.env.VITE_ONLINE === "off") return null;
   if (typeof location === "undefined" || !location.protocol.startsWith("http")) return null;
-  return `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`;
+  // The game server serves the game too, so its socket sits next to the page: /ws, or
+  // /<folder>/ws when the game lives in a sub-folder.
+  const url = new URL("./ws", location.href);
+  url.protocol = location.protocol === "https:" ? "wss:" : "ws:";
+  url.hash = "";
+  url.search = "";
+  return url.toString();
 }
 
 /**
