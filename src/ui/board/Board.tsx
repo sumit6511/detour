@@ -66,6 +66,8 @@ interface BoardProps {
   label?: string;
   /** Draw the move targets as a non-interactive illustration (rules diagrams). */
   illustrateTargets?: boolean;
+  /** Turn the board 180° so North's player sees their own pawn at the bottom (online play). */
+  flipped?: boolean;
   children?: ReactNode;
 }
 
@@ -102,6 +104,7 @@ export function Board({
   sideName = { south: "South", north: "North" },
   label,
   illustrateTargets = false,
+  flipped = false,
   children,
 }: BoardProps) {
   const uid = useId().replace(/[^a-zA-Z0-9]/g, "");
@@ -123,7 +126,8 @@ export function Board({
   const pickAt = (event: PointerEvent<SVGSVGElement>, forTouch: boolean): Pick => {
     const svg = svgRef.current;
     if (!svg) return null;
-    const { x, y } = toBoard(frame, svg.getBoundingClientRect(), event.clientX, event.clientY);
+    const raw = toBoard(frame, svg.getBoundingClientRect(), event.clientX, event.clientY);
+    const { x, y } = flipped ? { x: span - raw.x, y: span - raw.y } : raw;
     const pickMode = mode === "wall" ? "wall" : forTouch ? "step" : "auto";
     return pick(frame, x, y, {
       targets: view.targets,
@@ -204,12 +208,15 @@ export function Board({
 
   const fillFor = (owner: WallOwner) =>
     owner === "stone" ? `url(#${uid}-concrete)` : `url(#${uid}-stripes-${owner})`;
-  const notePos = preview ? toPercent(frame, wallCentre(preview).x, wallCentre(preview).y) : null;
+  // Board units to a % position over the SVG, honouring the flip.
+  const place = (x: number, y: number) =>
+    flipped ? toPercent(frame, span - x, span - y) : toPercent(frame, x, y);
+  const notePos = preview ? place(wallCentre(preview).x, wallCentre(preview).y) : null;
   const signPos = sign
-    ? toPercent(frame, cellCentre(view.pawns[sign.side]).x, cellCentre(view.pawns[sign.side]).y)
+    ? place(cellCentre(view.pawns[sign.side]).x, cellCentre(view.pawns[sign.side]).y)
     : null;
   const winnerPos = view.winner
-    ? toPercent(frame, cellCentre(view.pawns[view.winner]).x, cellCentre(view.pawns[view.winner]).y)
+    ? place(cellCentre(view.pawns[view.winner]).x, cellCentre(view.pawns[view.winner]).y)
     : null;
 
   return (
@@ -294,213 +301,215 @@ export function Board({
           <g className="board__coords" aria-hidden="true">
             {Array.from({ length: size }, (_, i) => (
               <text key={`f${i}`} x={i * PITCH + CELL / 2} y={span + PAD + LABEL * 0.62} textAnchor="middle">
-                {fileName(i)}
+                {fileName(flipped ? size - 1 - i : i)}
               </text>
             ))}
             {Array.from({ length: size }, (_, i) => (
               <text key={`r${i}`} x={-PAD - LABEL * 0.48} y={i * PITCH + CELL / 2 + 1.1} textAnchor="middle">
-                {rankName(i, size)}
+                {rankName(flipped ? size - 1 - i : i, size)}
               </text>
             ))}
           </g>
         ) : null}
 
-        {cells.map((cell) => {
-          const goalOf: Side | null = cell.row === 0 ? "south" : cell.row === size - 1 ? "north" : null;
-          return (
-            <g key={`c${cell.row}-${cell.col}`}>
-              <rect
-                x={cell.col * PITCH}
-                y={cell.row * PITCH}
-                width={CELL}
-                height={CELL}
-                rx={1.5}
-                className="board__cell"
-              />
-              {goalOf ? (
+        <g transform={flipped ? `rotate(180 ${span / 2} ${span / 2})` : undefined}>
+          {cells.map((cell) => {
+            const goalOf: Side | null = cell.row === 0 ? "south" : cell.row === size - 1 ? "north" : null;
+            return (
+              <g key={`c${cell.row}-${cell.col}`}>
                 <rect
                   x={cell.col * PITCH}
                   y={cell.row * PITCH}
                   width={CELL}
                   height={CELL}
                   rx={1.5}
-                  className={`board__goal board__goal--${goalOf}${view.winner === goalOf ? " board__goal--won" : ""}`}
-                  style={view.winner === goalOf ? undefined : { fill: `url(#${uid}-goal-${goalOf})` }}
+                  className="board__cell"
                 />
-              ) : null}
-            </g>
-          );
-        })}
-
-        {/* Lane markings along each finish edge, in the colour of whoever is heading there. */}
-        <line x1={0} x2={span} y1={-PAD / 2} y2={-PAD / 2} className="board__lane board__lane--south" />
-        <line
-          x1={0}
-          x2={span}
-          y1={span + PAD / 2}
-          y2={span + PAD / 2}
-          className="board__lane board__lane--north"
-        />
-
-        <AnimatePresence>
-          {showRoutes
-            ? (["north", "south"] as Side[]).map((side) => {
-                const pts = points(view.routes[side]);
-                const nudge = side === "south" ? -0.9 : 0.9;
-                return (
-                  <motion.polyline
-                    key={`${side}:${pts}`}
-                    points={pts}
-                    transform={`translate(${nudge} ${nudge})`}
-                    className={`route route--${side}`}
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
-                    transition={{ duration: 0.25 }}
+                {goalOf ? (
+                  <rect
+                    x={cell.col * PITCH}
+                    y={cell.row * PITCH}
+                    width={CELL}
+                    height={CELL}
+                    rx={1.5}
+                    className={`board__goal board__goal--${goalOf}${view.winner === goalOf ? " board__goal--won" : ""}`}
+                    style={view.winner === goalOf ? undefined : { fill: `url(#${uid}-goal-${goalOf})` }}
                   />
-                );
-              })
-            : null}
-        </AnimatePresence>
-
-        <AnimatePresence>
-          {view.lastFrom && view.lastSide ? (
-            <motion.circle
-              key={`from-${view.moveCount}`}
-              cx={cellCentre(view.lastFrom).x}
-              cy={cellCentre(view.lastFrom).y}
-              r={2.4}
-              fill="none"
-              strokeWidth={0.6}
-              strokeDasharray="1 1"
-              style={{ stroke: SIDE_COLOR[view.lastSide] }}
-              initial={{ opacity: 0.9 }}
-              animate={{ opacity: 0.35 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.8 }}
-              pointerEvents="none"
-            />
-          ) : null}
-        </AnimatePresence>
-
-        {hint?.type === "step" ? (
-          <circle
-            cx={cellCentre(hint).x}
-            cy={cellCentre(hint).y}
-            r={4.4}
-            className="board__hint"
-            pointerEvents="none"
-          />
-        ) : null}
-
-        <AnimatePresence>
-          {illustrateTargets
-            ? view.targets.map((step) => (
-                <circle
-                  key={`i${step.row}-${step.col}`}
-                  cx={cellCentre(step).x}
-                  cy={cellCentre(step).y}
-                  r={1.45}
-                  className="target__dot"
-                  style={{ fill: SIDE_COLOR[view.mover] }}
-                />
-              ))
-            : null}
-          {interactive && mode === "step"
-            ? view.targets.map((step, i) => (
-                <Target
-                  key={`t${step.row}-${step.col}-${view.moveCount}`}
-                  step={step}
-                  index={i}
-                  size={size}
-                  color={SIDE_COLOR[view.mover]}
-                  reduce={reduce}
-                  onStep={onStep}
-                />
-              ))
-            : null}
-        </AnimatePresence>
-
-        <AnimatePresence initial={false}>
-          {view.walls.map((wall) => {
-            const key = wallKey(wall);
-            return (
-              <motion.rect
-                key={key}
-                {...wallRect(wall)}
-                rx={0.75}
-                className={`barricade barricade--${wall.owner}`}
-                style={{
-                  fill: fillFor(wall.owner),
-                  transformBox: "fill-box",
-                  transformOrigin: "center",
-                }}
-                initial={reduce ? { opacity: 0 } : { opacity: 0, scale: 1.7 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{
-                  opacity: 0,
-                  scale: 0.7,
-                  transition: { duration: 0.18 },
-                }}
-                transition={{
-                  type: "spring",
-                  stiffness: 640,
-                  damping: 21,
-                  mass: 0.9,
-                }}
-              />
+                ) : null}
+              </g>
             );
           })}
-        </AnimatePresence>
 
-        {view.newestWall && !reduce ? (
-          <Dust key={`dust-${view.newestWall}-${view.moveCount}`} wallKeyText={view.newestWall} />
-        ) : null}
+          {/* Lane markings along each finish edge, in the colour of whoever is heading there. */}
+          <line x1={0} x2={span} y1={-PAD / 2} y2={-PAD / 2} className="board__lane board__lane--south" />
+          <line
+            x1={0}
+            x2={span}
+            y1={span + PAD / 2}
+            y2={span + PAD / 2}
+            className="board__lane board__lane--north"
+          />
 
-        {hint?.type === "wall" ? (
-          <rect {...wallRect(hint)} rx={0.75} className="board__hint-wall" pointerEvents="none" />
-        ) : null}
+          <AnimatePresence>
+            {showRoutes
+              ? (["north", "south"] as Side[]).map((side) => {
+                  const pts = points(view.routes[side]);
+                  const nudge = side === "south" ? -0.9 : 0.9;
+                  return (
+                    <motion.polyline
+                      key={`${side}:${pts}`}
+                      points={pts}
+                      transform={`translate(${nudge} ${nudge})`}
+                      className={`route route--${side}`}
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      exit={{ opacity: 0 }}
+                      transition={{ duration: 0.25 }}
+                    />
+                  );
+                })
+              : null}
+          </AnimatePresence>
 
-        <AnimatePresence>
-          {preview ? (
-            <motion.rect
-              key="preview"
-              rx={0.75}
+          <AnimatePresence>
+            {view.lastFrom && view.lastSide ? (
+              <motion.circle
+                key={`from-${view.moveCount}`}
+                cx={cellCentre(view.lastFrom).x}
+                cy={cellCentre(view.lastFrom).y}
+                r={2.4}
+                fill="none"
+                strokeWidth={0.6}
+                strokeDasharray="1 1"
+                style={{ stroke: SIDE_COLOR[view.lastSide] }}
+                initial={{ opacity: 0.9 }}
+                animate={{ opacity: 0.35 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.8 }}
+                pointerEvents="none"
+              />
+            ) : null}
+          </AnimatePresence>
+
+          {hint?.type === "step" ? (
+            <circle
+              cx={cellCentre(hint).x}
+              cy={cellCentre(hint).y}
+              r={4.4}
+              className="board__hint"
               pointerEvents="none"
-              className={`preview${previewLegal ? "" : " preview--bad"}${armed ? " preview--armed" : ""}`}
-              style={previewLegal ? { fill: `url(#${uid}-stripes-${view.mover})` } : undefined}
-              initial={{ opacity: 0, ...wallRect(preview) }}
-              animate={{ opacity: 1, ...wallRect(preview) }}
-              exit={{ opacity: 0, transition: { duration: 0.12 } }}
-              transition={reduce ? { duration: 0 } : SNAP}
             />
           ) : null}
-        </AnimatePresence>
 
-        {ghostCell ? (
-          <circle
-            cx={cellCentre(ghostCell).x}
-            cy={cellCentre(ghostCell).y}
-            r={3.9}
-            className="ghost-pawn"
-            style={{ fill: SIDE_COLOR[view.mover] }}
-            pointerEvents="none"
-          />
-        ) : null}
+          <AnimatePresence>
+            {illustrateTargets
+              ? view.targets.map((step) => (
+                  <circle
+                    key={`i${step.row}-${step.col}`}
+                    cx={cellCentre(step).x}
+                    cy={cellCentre(step).y}
+                    r={1.45}
+                    className="target__dot"
+                    style={{ fill: SIDE_COLOR[view.mover] }}
+                  />
+                ))
+              : null}
+            {interactive && mode === "step"
+              ? view.targets.map((step, i) => (
+                  <Target
+                    key={`t${step.row}-${step.col}-${view.moveCount}`}
+                    step={step}
+                    index={i}
+                    size={size}
+                    color={SIDE_COLOR[view.mover]}
+                    reduce={reduce}
+                    onStep={onStep}
+                  />
+                ))
+              : null}
+          </AnimatePresence>
 
-        <g pointerEvents="none">
-          {(["north", "south"] as Side[]).map((side) => (
-            <Pawn
-              key={side}
-              side={side}
-              cell={view.pawns[side]}
-              active={!view.winner && interactive && view.mover === side}
-              thinking={thinking && view.mover === side}
-              won={view.winner === side}
-              reduce={reduce}
-              shadowFill={`url(#${uid}-shadow)`}
+          <AnimatePresence initial={false}>
+            {view.walls.map((wall) => {
+              const key = wallKey(wall);
+              return (
+                <motion.rect
+                  key={key}
+                  {...wallRect(wall)}
+                  rx={0.75}
+                  className={`barricade barricade--${wall.owner}`}
+                  style={{
+                    fill: fillFor(wall.owner),
+                    transformBox: "fill-box",
+                    transformOrigin: "center",
+                  }}
+                  initial={reduce ? { opacity: 0 } : { opacity: 0, scale: 1.7 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{
+                    opacity: 0,
+                    scale: 0.7,
+                    transition: { duration: 0.18 },
+                  }}
+                  transition={{
+                    type: "spring",
+                    stiffness: 640,
+                    damping: 21,
+                    mass: 0.9,
+                  }}
+                />
+              );
+            })}
+          </AnimatePresence>
+
+          {view.newestWall && !reduce ? (
+            <Dust key={`dust-${view.newestWall}-${view.moveCount}`} wallKeyText={view.newestWall} />
+          ) : null}
+
+          {hint?.type === "wall" ? (
+            <rect {...wallRect(hint)} rx={0.75} className="board__hint-wall" pointerEvents="none" />
+          ) : null}
+
+          <AnimatePresence>
+            {preview ? (
+              <motion.rect
+                key="preview"
+                rx={0.75}
+                pointerEvents="none"
+                className={`preview${previewLegal ? "" : " preview--bad"}${armed ? " preview--armed" : ""}`}
+                style={previewLegal ? { fill: `url(#${uid}-stripes-${view.mover})` } : undefined}
+                initial={{ opacity: 0, ...wallRect(preview) }}
+                animate={{ opacity: 1, ...wallRect(preview) }}
+                exit={{ opacity: 0, transition: { duration: 0.12 } }}
+                transition={reduce ? { duration: 0 } : SNAP}
+              />
+            ) : null}
+          </AnimatePresence>
+
+          {ghostCell ? (
+            <circle
+              cx={cellCentre(ghostCell).x}
+              cy={cellCentre(ghostCell).y}
+              r={3.9}
+              className="ghost-pawn"
+              style={{ fill: SIDE_COLOR[view.mover] }}
+              pointerEvents="none"
             />
-          ))}
+          ) : null}
+
+          <g pointerEvents="none">
+            {(["north", "south"] as Side[]).map((side) => (
+              <Pawn
+                key={side}
+                side={side}
+                cell={view.pawns[side]}
+                active={!view.winner && interactive && view.mover === side}
+                thinking={thinking && view.mover === side}
+                won={view.winner === side}
+                reduce={reduce}
+                shadowFill={`url(#${uid}-shadow)`}
+              />
+            ))}
+          </g>
         </g>
       </svg>
 

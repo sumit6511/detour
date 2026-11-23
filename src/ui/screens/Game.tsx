@@ -48,6 +48,8 @@ import {
   IconUndo,
 } from "../icons";
 import { LEVEL_LABEL, plural, raceNames } from "../labels";
+import type { Presence } from "../../online/backend";
+import { REACTIONS, type Reaction } from "../../online/protocol";
 import type { Settings } from "../settings";
 
 interface GameProps {
@@ -59,6 +61,25 @@ interface GameProps {
   onMenu: () => void;
   onHelp: () => void;
   onOpenSettings: () => void;
+  online?: OnlineControls;
+}
+
+/** What an online race adds: whose seat this is, the other player's state, and the network actions. */
+export interface OnlineControls {
+  code: string;
+  you: Side;
+  names: Record<Side, string>;
+  opponent: Presence;
+  /** True once the opponent has been away long enough to claim the win. */
+  canClaim: boolean;
+  abandoned: boolean;
+  rematch: { you: boolean; them: boolean };
+  reactions: Array<{ id: number; side: Side; text: string }>;
+  play: (action: DetourAction) => void;
+  resign: () => void;
+  claim: () => void;
+  requestRematch: () => void;
+  react: (text: Reaction) => void;
 }
 
 interface Rewind {
@@ -77,12 +98,16 @@ export function Game({
   onMenu,
   onHelp,
   onOpenSettings,
+  online,
 }: GameProps) {
   const notify = useToast();
   const { setup } = match;
   const vsBot = setup.mode === "bot";
-  const names = raceNames(setup);
+  const names = online ? online.names : raceNames(setup);
   const total = match.moves.length;
+  // Online, whoever sits North sees the board turned round so their own pawn starts at the bottom.
+  const onlineYou = online?.you ?? null;
+  const flipped = onlineYou === "north";
 
   const [rewind, setRewind] = useState<Rewind | null>(null);
   const [mode, setMode] = useState<"step" | "wall">("step");
@@ -105,7 +130,9 @@ export function Game({
   const winner = winnerOf(shown, state);
   const mover = sideToMove(shown);
   const thinking = !rewind && isBotTurn(match);
-  const canAct = !rewind && !liveWinner && !thinking && (!vsBot || mover === HUMAN);
+  const waiting = !!online && !liveWinner && !rewind && mover !== online.you;
+  const canAct =
+    !rewind && !liveWinner && !thinking && (!vsBot || mover === HUMAN) && (!online || mover === online.you);
   const view = useMemo(() => viewOfMatch(shown, canAct), [shown, canAct]);
   const routes = useMemo(
     () => ({
@@ -165,14 +192,14 @@ export function Game({
         else sfx.step();
       }
       if (winner && !rewind) {
-        const humanWon = !vsBot || winner === HUMAN;
+        const humanWon = onlineYou ? winner === onlineYou : !vsBot || winner === HUMAN;
         setTimeout(() => (humanWon ? sfx.win() : sfx.lose()), 280);
         if (humanWon) setCelebrate((n) => n + 1);
       }
     } else if (shown.moves.length < before.count && !rewind) {
       sfx.undo();
     }
-  }, [shown.moves.length, routes, setup.seed, winner, rewind, vsBot, view.lastFrom, shown.moves]);
+  }, [shown.moves.length, routes, setup.seed, winner, rewind, vsBot, view.lastFrom, shown.moves, onlineYou]);
 
   useEffect(() => {
     if (!sign) return;
@@ -210,10 +237,11 @@ export function Game({
       const next = play(match, action);
       if (!next) return false;
       setMode("step");
-      onChange(next);
+      if (online) online.play(action);
+      else onChange(next);
       return true;
     },
-    [match, onChange],
+    [match, onChange, online],
   );
 
   const reasonFor = useCallback(
@@ -278,7 +306,8 @@ export function Game({
     onChange({ ...match, hints: (match.hints ?? 0) + 1 });
   };
 
-  const canUndo = !rewind && !liveWinner && !thinking && match.moves.some((m) => !vsBot || m.side === HUMAN);
+  const canUndo =
+    !online && !rewind && !liveWinner && !thinking && match.moves.some((m) => !vsBot || m.side === HUMAN);
 
   // ---------- Keyboard ----------
   // One window listener for the screen's lifetime, always calling the latest handler, so keys
@@ -336,7 +365,9 @@ export function Game({
         arrowleft: { row: 0, col: -1 },
         arrowright: { row: 0, col: 1 },
       };
-      const d = delta[key];
+      const raw = delta[key];
+      // On a flipped board, "up" on screen is the other way round on the grid.
+      const d = raw && flipped ? { row: -raw.row, col: -raw.col } : raw;
 
       if (mode === "wall") {
         if (key === "escape") {
@@ -381,6 +412,12 @@ export function Game({
     if (rewind) return `Replay · move ${rewind.index} of ${total}`;
     if (liveWinner) return "";
     if (thinking) return "The bot is thinking…";
+    if (online && online.opponent.here === false) {
+      return online.canClaim
+        ? `${names[opponentOf(online.you)]} left. You can claim the win, or keep waiting.`
+        : `${names[opponentOf(online.you)]} lost connection. Waiting for them to come back…`;
+    }
+    if (waiting) return `${names[mover]} is thinking…`;
     if (hint && hint.at === total) {
       return hint.action.type === "step"
         ? `Hint: step to ${actionName(hint.action, state.size)}.`
@@ -395,13 +432,18 @@ export function Game({
     }
     const other = opponentOf(mover);
     const lead = routes[other] - routes[mover];
-    const whose = vsBot ? "Your move." : `${names[mover]} to move.`;
-    if (lead > 0) return `${whose} ${vsBot ? "You're" : `${names[mover]} is`} ${plural(lead, "step")} ahead.`;
+    const yours = vsBot || !!online;
+    const whose = yours ? "Your move." : `${names[mover]} to move.`;
+    if (lead > 0) return `${whose} ${yours ? "You're" : `${names[mover]} is`} ${plural(lead, "step")} ahead.`;
     if (lead === 0) return `${whose} Dead level, and moving first breaks the tie.`;
     return `${whose} ${vsBot ? "The bot" : names[other]} leads by ${plural(-lead, "step")}. A barricade could swing it.`;
   };
 
-  const modeLabel = vsBot ? `vs Bot · ${LEVEL_LABEL[setup.level]}` : "Two players";
+  const modeLabel = online
+    ? `Online · ${online.code}`
+    : vsBot
+      ? `vs Bot · ${LEVEL_LABEL[setup.level]}`
+      : "Two players";
 
   return (
     <main className="game">
@@ -448,9 +490,11 @@ export function Game({
                 walls={state.wallsLeft[side]}
                 wallsEach={setup.wallsEach}
                 active={!winner && mover === side}
-                thinking={thinking && mover === side}
+                thinking={(thinking || waiting) && mover === side}
                 winner={winner === side}
                 tag={vsBot && side === "north" ? LEVEL_LABEL[setup.level] : null}
+                away={!!online && side !== online.you && online.opponent.here === false}
+                reaction={online?.reactions.filter((r) => r.side === side).at(-1) ?? null}
               />
             ))}
           </div>
@@ -487,6 +531,7 @@ export function Game({
             describeWall={describeWall}
             showRoutes={settings.routes && !winner}
             showCoords={settings.coords}
+            flipped={flipped}
             hint={hint && hint.at === total && canAct ? hint.action : null}
             sign={sign}
             thinking={thinking}
@@ -513,7 +558,8 @@ export function Game({
                   match={match}
                   winner={liveWinner}
                   routes={routes}
-                  onRematch={onRematch}
+                  onRematch={online ? online.requestRematch : onRematch}
+                  online={online}
                   onReplay={() => setRewind({ index: 0, playing: true })}
                   onMenu={onMenu}
                 />
@@ -606,9 +652,11 @@ export function Game({
                     ) : null}
                   </div>
                   <div className="toolbar__secondary">
-                    <button type="button" className="btn" onClick={doUndo} disabled={!canUndo}>
-                      <IconUndo /> Undo
-                    </button>
+                    {online ? null : (
+                      <button type="button" className="btn" onClick={doUndo} disabled={!canUndo}>
+                        <IconUndo /> Undo
+                      </button>
+                    )}
                     {vsBot ? (
                       <button
                         type="button"
@@ -629,6 +677,23 @@ export function Game({
                     </button>
                   </div>
                 </div>
+                {online ? (
+                  <div className="reactions" role="group" aria-label="Send a reaction">
+                    {REACTIONS.map((text) => (
+                      <button key={text} type="button" className="chip" onClick={() => online.react(text)}>
+                        {text}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+                {online?.canClaim ? (
+                  <div className="claim">
+                    <span>{names[opponentOf(online.you)]} has been gone over a minute.</span>
+                    <button type="button" className="btn btn--go" onClick={online.claim}>
+                      Claim the win
+                    </button>
+                  </div>
+                ) : null}
                 <p className="hint-line">
                   <span className="only-fine">
                     Click a highlighted square to move, or a groove to place a barricade.
@@ -668,7 +733,8 @@ export function Game({
               className="btn btn--danger"
               onClick={() => {
                 setConfirmResign(false);
-                onChange(resign(match, vsBot ? HUMAN : mover));
+                if (online) online.resign();
+                else onChange(resign(match, vsBot ? HUMAN : mover));
                 sfx.lose();
               }}
             >
@@ -711,6 +777,8 @@ function RacerCard({
   thinking,
   winner,
   tag,
+  away = false,
+  reaction = null,
 }: {
   side: Side;
   name: string;
@@ -721,6 +789,8 @@ function RacerCard({
   thinking: boolean;
   winner: boolean;
   tag: string | null;
+  away?: boolean;
+  reaction?: { id: number; text: string } | null;
 }) {
   return (
     <div
@@ -740,7 +810,8 @@ function RacerCard({
         <span className="racer__name">{name}</span>
         {tag ? <span className="racer__tag">{tag}</span> : null}
         {winner ? <span className="racer__tag racer__tag--win">Winner</span> : null}
-        {thinking ? (
+        {away ? <span className="racer__tag racer__tag--away">Away</span> : null}
+        {thinking && !away ? (
           <span className="thinking" aria-label="thinking">
             <i />
             <i />
@@ -748,6 +819,20 @@ function RacerCard({
           </span>
         ) : null}
       </div>
+      <AnimatePresence>
+        {reaction ? (
+          <motion.span
+            key={reaction.id}
+            className="bubble"
+            initial={{ opacity: 0, y: 8, scale: 0.8 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -6 }}
+            transition={{ type: "spring", stiffness: 520, damping: 26 }}
+          >
+            {reaction.text}
+          </motion.span>
+        ) : null}
+      </AnimatePresence>
       <div className="racer__steps">
         <Ticker value={steps} className="racer__count num" />
         <span>{steps === 1 ? "step to go" : "steps to go"}</span>
@@ -797,6 +882,7 @@ function ResultPanel({
   onRematch,
   onReplay,
   onMenu,
+  online,
 }: {
   match: Match;
   winner: Side;
@@ -804,41 +890,78 @@ function ResultPanel({
   onRematch: () => void;
   onReplay: () => void;
   onMenu: () => void;
+  online?: OnlineControls;
 }) {
   const vsBot = match.setup.mode === "bot";
-  const names = raceNames(match.setup);
+  const names = online ? online.names : raceNames(match.setup);
   const loser = opponentOf(winner);
-  const humanWon = !vsBot || winner === HUMAN;
+  const humanWon = online ? winner === online.you : !vsBot || winner === HUMAN;
   const margin = match.resigned ? null : routes[loser];
   const turns = useCountUp(Math.ceil(match.moves.length / 2));
   const marginShown = useCountUp(margin ?? 0);
   const elapsed = match.finishedAt && match.startedAt ? match.finishedAt - match.startedAt : null;
 
-  const title = match.resigned
-    ? vsBot
-      ? "You resigned"
-      : `${names[match.resigned]} resigned`
-    : vsBot
-      ? winner === HUMAN
-        ? "You crossed first!"
-        : "The bot crossed first"
-      : `${names[winner]} wins!`;
-  const line = match.resigned
-    ? "Every racer has an off day. Run it back?"
-    : vsBot
-      ? winner === HUMAN
-        ? `You beat ${LEVEL_LABEL[match.setup.level]} with ${plural(margin ?? 0, "step")} to spare.`
-        : `You were ${plural(routes[HUMAN], "step")} short. One well-placed barricade could flip it.`
-      : `${names[winner]} won by ${plural(margin ?? 0, "step")}.`;
+  const opponentName = online ? names[opponentOf(online.you)] : "";
+  const onlineTitle = !online
+    ? ""
+    : online.abandoned
+      ? `${opponentName} left the race`
+      : match.resigned
+        ? match.resigned === online.you
+          ? "You resigned"
+          : `${opponentName} resigned`
+        : winner === online.you
+          ? "You crossed first!"
+          : `${opponentName} crossed first`;
+  const title = online
+    ? onlineTitle
+    : match.resigned
+      ? vsBot
+        ? "You resigned"
+        : `${names[match.resigned]} resigned`
+      : vsBot
+        ? winner === HUMAN
+          ? "You crossed first!"
+          : "The bot crossed first"
+        : `${names[winner]} wins!`;
+  const line = online
+    ? online.abandoned
+      ? "You win by forfeit."
+      : match.resigned
+        ? match.resigned === online.you
+          ? "Every racer has an off day. Run it back?"
+          : "You win by resignation."
+        : winner === online.you
+          ? `You won by ${plural(margin ?? 0, "step")}.`
+          : `${opponentName} won by ${plural(margin ?? 0, "step")}. One well-placed barricade could flip it.`
+    : match.resigned
+      ? "Every racer has an off day. Run it back?"
+      : vsBot
+        ? winner === HUMAN
+          ? `You beat ${LEVEL_LABEL[match.setup.level]} with ${plural(margin ?? 0, "step")} to spare.`
+          : `You were ${plural(routes[HUMAN], "step")} short. One well-placed barricade could flip it.`
+        : `${names[winner]} won by ${plural(margin ?? 0, "step")}.`;
 
   const stats: Array<{ label: string; value: string }> = [
     { label: "Turns", value: String(turns) },
     {
-      label: vsBot ? "Your barricades" : "Orange barricades",
+      label: online
+        ? online.you === "south"
+          ? "Your barricades"
+          : `${opponentName}'s barricades`
+        : vsBot
+          ? "Your barricades"
+          : "Orange barricades",
       value: `${wallsUsed(match, "south")}/${match.setup.wallsEach}`,
     },
     {
-      label: vsBot ? "Bot barricades" : "Teal barricades",
+      label: online
+        ? online.you === "north"
+          ? "Your barricades"
+          : `${opponentName}'s barricades`
+        : vsBot
+          ? "Bot barricades"
+          : "Teal barricades",
       value: `${wallsUsed(match, "north")}/${match.setup.wallsEach}`,
     },
   ];
@@ -878,14 +1001,31 @@ function ResultPanel({
         ))}
       </div>
       <div className="result__actions">
-        <button type="button" className="btn btn--go" onClick={onRematch} data-autofocus>
-          <IconRestart /> Race again
-        </button>
+        {online ? (
+          <button
+            type="button"
+            className="btn btn--go"
+            onClick={onRematch}
+            disabled={online.rematch.you}
+            data-autofocus
+          >
+            <IconRestart />{" "}
+            {online.rematch.you
+              ? `Waiting for ${names[opponentOf(online.you)]}…`
+              : online.rematch.them
+                ? "Accept rematch"
+                : "Rematch"}
+          </button>
+        ) : (
+          <button type="button" className="btn btn--go" onClick={onRematch} data-autofocus>
+            <IconRestart /> Race again
+          </button>
+        )}
         <button type="button" className="btn" onClick={onReplay}>
           <IconReplay /> Watch replay
         </button>
         <button type="button" className="btn btn--quiet" onClick={onMenu}>
-          Change settings
+          {online ? "Leave" : "Change settings"}
         </button>
       </div>
     </section>

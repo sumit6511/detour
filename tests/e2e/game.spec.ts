@@ -60,7 +60,7 @@ test("barricades: place one, and an illegal one is explained", async ({ page }) 
   await page.keyboard.press("w");
   await page.keyboard.press("ArrowDown");
   await page.keyboard.press("Enter");
-  await expect(page.getByText("That spot overlaps another barricade.")).toBeVisible();
+  await expect(page.locator(".toast", { hasText: "That spot overlaps another barricade." })).toBeVisible();
   expect((await saved(page))!.moves).toHaveLength(2);
 });
 

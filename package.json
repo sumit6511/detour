@@ -5,7 +5,7 @@
   "description": "Detour: a wall-placing race game. Beat the bot (or a friend) to the far side of the board.",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "concurrently -k -n web,server -c green,blue \"vite\" \"npm:server:dev\"",
     "build": "tsc --noEmit && vite build",
     "build:single": "vite build --mode single && node scripts/inline-build.mjs",
     "preview": "vite preview",
@@ -15,12 +15,17 @@
     "format:check": "prettier --check .",
     "test": "vitest run",
     "test:e2e": "playwright test",
-    "sim": "tsx scripts/simulate.ts"
+    "sim": "tsx scripts/simulate.ts",
+    "dev:web": "vite",
+    "server:dev": "tsx watch server/index.ts",
+    "build:server": "esbuild server/index.ts --bundle --platform=node --format=esm --target=node20 --packages=external --outfile=server-dist/index.mjs",
+    "start": "node server-dist/index.mjs"
   },
   "dependencies": {
     "motion": "^12.42.2",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "ws": "^8.23.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",
@@ -28,7 +33,10 @@
     "@types/node": "^22.20.5",
     "@types/react": "^19.0.2",
     "@types/react-dom": "^19.0.2",
+    "@types/ws": "^8.18.2",
     "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^9.2.5",
+    "esbuild": "^0.25.12",
     "eslint": "^9.39.5",
     "eslint-plugin-react-hooks": "^5.2.0",
     "globals": "^15.15.0",

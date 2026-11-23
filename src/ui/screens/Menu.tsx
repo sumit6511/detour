@@ -17,6 +17,8 @@ import { viewOfMatch } from "../board/view";
 import { Segmented } from "../components/Controls";
 import { DetourArrow, IconHelp, IconPlay, IconSettings } from "../icons";
 import { LEVEL_LABEL, LEVEL_NOTE } from "../labels";
+import type { OnlineSession } from "../../online/backend";
+import { OnlinePanel } from "./OnlinePanel";
 
 export interface RecordEntry {
   wins: number;
@@ -26,6 +28,7 @@ export interface RecordEntry {
 }
 export type RaceRecord = Record<string, RecordEntry>;
 export const recordKey = (level: BotLevel, size: BoardSize) => `${level}-${size}`;
+export const onlineRecordKey = (size: BoardSize) => `online-${size}`;
 export const EMPTY_ENTRY: RecordEntry = {
   wins: 0,
   losses: 0,
@@ -42,6 +45,8 @@ interface MenuProps {
   record: RaceRecord;
   onHelp: () => void;
   onOpenSettings: () => void;
+  onOnline: (session: OnlineSession) => void;
+  joinCode?: string | null;
 }
 
 const LEVELS: BotLevel[] = ["easy", "medium", "hard"];
@@ -56,6 +61,8 @@ export function Menu({
   record,
   onHelp,
   onOpenSettings,
+  onOnline,
+  joinCode = null,
 }: MenuProps) {
   const set = <K extends keyof MatchOptions>(key: K, value: MatchOptions[K]) =>
     onOptions({ ...options, [key]: value });
@@ -125,7 +132,7 @@ export function Menu({
             className="card setup"
             onSubmit={(event) => {
               event.preventDefault();
-              onStart();
+              if (options.mode !== "online") onStart();
             }}
           >
             <div className="field">
@@ -138,6 +145,7 @@ export function Menu({
                 choices={[
                   { value: "bot", label: "Bot" },
                   { value: "friend", label: "Friend", note: "same screen" },
+                  { value: "online", label: "Online", note: "anyone" },
                 ]}
               />
             </div>
@@ -191,9 +199,13 @@ export function Menu({
               </p>
             </div>
 
-            <button type="submit" className="btn btn--go btn--big">
-              <IconPlay /> {saved ? "Start a new race" : "Start race"}
-            </button>
+            {options.mode === "online" ? (
+              <OnlinePanel options={options} onOnline={onOnline} initialCode={joinCode} />
+            ) : (
+              <button type="submit" className="btn btn--go btn--big">
+                <IconPlay /> {saved ? "Start a new race" : "Start race"}
+              </button>
+            )}
           </form>
         </section>
 
@@ -229,7 +241,7 @@ export function Menu({
             <table className="record__table">
               <thead>
                 <tr>
-                  <th scope="col">vs Bot</th>
+                  <th scope="col">Opponent</th>
                   {SIZES.map((size) => (
                     <th scope="col" key={size} className="num-col">
                       {size}×{size}
@@ -251,6 +263,17 @@ export function Menu({
                     })}
                   </tr>
                 ))}
+                <tr>
+                  <th scope="row">Online</th>
+                  {SIZES.map((size) => {
+                    const r = record[onlineRecordKey(size)] ?? EMPTY_ENTRY;
+                    return (
+                      <td key={size} className="num-col num">
+                        {r.wins}–{r.losses}
+                      </td>
+                    );
+                  })}
+                </tr>
               </tbody>
             </table>
           </section>

@@ -4,7 +4,8 @@ A wall-placing race game for the browser. Get your pawn to the far side of the b
 opponent does. Each turn you either take a step or drop a barricade to send them the long way
 round, but you can never wall anyone in completely.
 
-Play against a bot (Easy, Medium or Hard) or against a friend on the same screen.
+Play against a bot (Easy, Medium or Hard), against a friend on the same screen, or online
+against anyone.
 
 ## Rules
 
@@ -46,6 +47,57 @@ Play against a bot (Easy, Medium or Hard) or against a friend on the same screen
 - **Settings:** sound, route lines, board coordinates, and a light/dark/system theme.
 - An illustrated How to Play and an installable web-app manifest.
 
+## Online play
+
+Pick **Online** in the menu, then:
+
+- **Quick match:** you're paired with the next person who picks Quick match on the same board.
+- **Invite a friend:** you get a five-letter code and an invite link (`…#join-abcde`). The race
+  starts the moment they join.
+- **Have a code?** Type it in and join.
+
+The side you get is random. Orange moves first, and whoever plays teal sees the board turned
+round, so your own pawn always starts at the bottom. During the race you can send quick
+reactions ("Nice move", "Good game"…). If your opponent's connection drops, you see it straight
+away. After a full minute away you can claim the win, or keep waiting. Reload mid-race and you go
+straight back to your seat. After the race, both players can agree to a rematch, which swaps
+sides and deals a new layout. Undo and hints are off online.
+
+### Two ways to host it
+
+1. **The Detour server** (`server/`): a small Node service that serves the built game and runs
+   the multiplayer socket at `/ws` on the same port. It is authoritative: every move is checked
+   by the same engine the browser uses before the other player sees it, and stale or repeated
+   submits are refused. Seats are kept with a secret token, so a reconnect retakes the same
+   seat. Rooms live in memory; finished and idle ones are cleared automatically.
+2. **A Claude artifact page:** when the single-file build runs inside a claude.ai artifact
+   viewer, online play uses the page's own shared storage instead of a server. Each race is one
+   shared document, and a live room per race carries presence and reactions. Anyone the page is
+   shared with as a Contributor can play. With no referee, each browser replays and checks every
+   move it reads, and only the player whose turn it is writes.
+
+### Running and deploying the server
+
+```bash
+npm run dev            # game on :5173 and game server on :8787 (/ws is proxied)
+```
+
+```bash
+npm run build && npm run build:server && npm start   # production, on $PORT (default 8787)
+```
+
+| Variable          | Meaning                                                                                          |
+| ----------------- | ------------------------------------------------------------------------------------------------ |
+| `PORT`            | Port for the game and the socket (default 8787)                                                  |
+| `STATIC_DIR`      | Folder of the built game to serve (default `dist`)                                               |
+| `ALLOWED_ORIGINS` | Comma-separated origins allowed to open a socket (default: any)                                  |
+| `VITE_SERVER_URL` | Build-time: socket address when the game is hosted elsewhere, e.g. `wss://detour.example.com/ws` |
+
+The repository includes a `Dockerfile` and a Render blueprint (`render.yaml`). Either gives you
+one service with the game and online play at a single URL; `/healthz` answers for health checks.
+GitHub Pages can only host the game itself, so to play online from Pages, deploy the server
+somewhere and set the repository variable `DETOUR_SERVER_URL` to its socket address.
+
 ## Notation
 
 Files are lettered from the left (a, b, c…) and ranks numbered from the bottom (1, 2, 3…), so
@@ -67,11 +119,14 @@ Then open the URL Vite prints (usually http://localhost:5173).
 
 | Command                | What it does                                                              |
 | ---------------------- | ------------------------------------------------------------------------- |
-| `npm run dev`          | Start the dev server with hot reload                                      |
+| `npm run dev`          | Start the game and the game server with hot reload                        |
+| `npm run dev:web`      | Start only the game (no online play)                                      |
+| `npm run build:server` | Bundle the game server into `server-dist/`                                |
+| `npm start`            | Run the bundled game server (serves `dist/` too)                          |
 | `npm run build`        | Type-check and build a static site into `dist/`                           |
 | `npm run build:single` | Build one self-contained `dist-single/detour.html` you can open from disk |
-| `npm test`             | Unit tests (engine, notation, board geometry)                             |
-| `npm run test:e2e`     | Browser tests on desktop and phone viewports (Playwright)                 |
+| `npm test`             | Unit tests (engine, notation, geometry, online model, server, backends)   |
+| `npm run test:e2e`     | Browser tests on desktop and phone, including two-player online races     |
 | `npm run lint`         | ESLint                                                                    |
 | `npm run format`       | Prettier                                                                  |
 | `npm run typecheck`    | Type-check everything                                                     |
@@ -104,12 +159,15 @@ src/
     generator.ts     Roadworks layouts (mirror-image pairs)
     match.ts         A whole race as data: setup + move list, play/undo/resign, save format
   ai/                Web Worker that runs the bot, plus a client with a main-thread fallback
+  online/            Online races: shared game model and validation, the socket protocol, and
+                     two backends (Detour server, Claude artifact storage)
   audio/sfx.ts       Synthesized sound effects
   ui/
     board/           The SVG board: geometry (pointer → square or groove), animations, confetti
-    screens/         Menu (with live demo race), Game, How to Play, Settings
+    screens/         Menu (with live demo race), Game, Online (lobby + race), How to Play, Settings
     components/      Modal, toasts, segmented control, switch, rolling numbers
   styles.css         Design tokens (light and dark) and all styling
+server/              The game server: rooms, matchmaking, reconnects (hub.ts) and HTTP + WebSocket
 tests/e2e/           Playwright browser tests
 scripts/             Bot balance simulation, single-file build
 ```

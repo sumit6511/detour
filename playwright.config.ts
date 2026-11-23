@@ -14,8 +14,10 @@ export default defineConfig({
     trace: "off",
     launchOptions: { executablePath },
   },
+  // The production server: the built game plus the multiplayer socket on one port.
   webServer: {
-    command: "npm run build && npx vite preview --port 4173 --strictPort",
+    command: "npm run build && npm run build:server && node server-dist/index.mjs",
+    env: { PORT: "4173", STATIC_DIR: "dist" },
     port: 4173,
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,

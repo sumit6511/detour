@@ -1,0 +1,12 @@
+# Render Blueprint: one web service that serves the game and runs online multiplayer.
+services:
+  - type: web
+    name: detour
+    runtime: node
+    plan: free
+    buildCommand: npm ci && npm run build && npm run build:server
+    startCommand: npm start
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
