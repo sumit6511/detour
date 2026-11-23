@@ -1,0 +1,786 @@
+/* Layout: one column, the asphalt board is the hero; two racer "signs" above it and a
+   control strip below. Light = sunlit concrete, dark = night road. The board stays asphalt
+   in both themes, because asphalt is asphalt. */
+:root {
+  --bg: #e6eaed;
+  --surface: #f6f8f9;
+  --surface-2: #dce2e6;
+  --edge: #c2cbd2;
+  --ink: #151c23;
+  --ink-soft: #51606c;
+  --asphalt: #2a3037;
+  --asphalt-cell: #373f48;
+  --lane: #eef2f5;
+  --south: #ee7a14;
+  --north: #1494ad;
+  --south-soft: rgba(238, 122, 20, 0.26);
+  --north-soft: rgba(20, 148, 173, 0.24);
+  --sign-ink: #17110a;
+  --concrete: #aab3bb;
+  --concrete-edge: #7b8690;
+  --ok: #2f9e63;
+  --bad: #d64545;
+  --focus: #1468c9;
+  --shadow: 0 1px 0 rgba(255, 255, 255, 0.7) inset, 0 8px 24px -14px rgba(21, 28, 35, 0.35);
+
+  --font-display: "Overpass", "Arial Narrow", "Helvetica Neue", Arial, sans-serif;
+  --font-body: "Public Sans", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-mono: "Overpass Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1317;
+    --surface: #171d23;
+    --surface-2: #1f272e;
+    --edge: #2d3841;
+    --ink: #e8edf1;
+    --ink-soft: #96a3ae;
+    --asphalt: #1c2228;
+    --asphalt-cell: #2a3239;
+    --lane: #e1e8ed;
+    --south: #f5872c;
+    --north: #23aac4;
+    --south-soft: rgba(245, 135, 44, 0.22);
+    --north-soft: rgba(35, 170, 196, 0.2);
+    --concrete: #8d97a0;
+    --concrete-edge: #636e78;
+    --ok: #4cc283;
+    --bad: #ef6767;
+    --focus: #5ea8ff;
+    --shadow: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 10px 28px -16px rgba(0, 0, 0, 0.8);
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme="dark"] {
+  --bg: #0f1317;
+  --surface: #171d23;
+  --surface-2: #1f272e;
+  --edge: #2d3841;
+  --ink: #e8edf1;
+  --ink-soft: #96a3ae;
+  --asphalt: #1c2228;
+  --asphalt-cell: #2a3239;
+  --lane: #e1e8ed;
+  --south: #f5872c;
+  --north: #23aac4;
+  --south-soft: rgba(245, 135, 44, 0.22);
+  --north-soft: rgba(35, 170, 196, 0.2);
+  --concrete: #8d97a0;
+  --concrete-edge: #636e78;
+  --ok: #4cc283;
+  --bad: #ef6767;
+  --focus: #5ea8ff;
+  --shadow: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 10px 28px -16px rgba(0, 0, 0, 0.8);
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: 15px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+button,
+input {
+  font: inherit;
+  color: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.app {
+  max-width: 640px;
+  margin: 0 auto;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 20px 40px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+/* ---------- Type ---------- */
+
+h1,
+h2,
+h3 {
+  font-family: var(--font-display);
+  line-height: 1.1;
+  margin: 0;
+  text-wrap: balance;
+}
+
+.eyebrow {
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+.lede {
+  margin: 0;
+  color: var(--ink-soft);
+  max-width: 52ch;
+}
+
+.num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- Road-sign wordmark (menu hero) ---------- */
+
+.sign {
+  display: inline-flex;
+  align-items: center;
+  gap: 14px;
+  background: var(--south);
+  color: var(--sign-ink);
+  border-radius: 10px;
+  padding: 10px 18px 8px;
+  box-shadow:
+    0 0 0 3px var(--bg),
+    0 0 0 5px var(--sign-ink),
+    0 14px 30px -18px rgba(0, 0, 0, 0.6);
+  transform: rotate(-1.5deg);
+}
+
+.sign__word {
+  font-family: var(--font-display);
+  font-weight: 900;
+  font-size: clamp(40px, 11vw, 64px);
+  letter-spacing: 0.02em;
+  line-height: 1;
+}
+
+.sign__arrow {
+  width: clamp(34px, 8vw, 48px);
+  height: auto;
+}
+
+.hero {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 18px;
+  padding-top: 8px;
+}
+
+/* ---------- Panels & controls ---------- */
+
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--edge);
+  border-radius: 14px;
+  box-shadow: var(--shadow);
+}
+
+.setup {
+  padding: 18px;
+  display: grid;
+  gap: 16px;
+}
+
+.field {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.field legend {
+  padding: 0;
+  margin-bottom: 8px;
+}
+
+.hint {
+  font-size: 13px;
+  color: var(--ink-soft);
+  margin: 0;
+}
+
+.segmented {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 4px;
+  background: var(--surface-2);
+  border-radius: 11px;
+  width: fit-content;
+  max-width: 100%;
+}
+
+.segmented label {
+  position: relative;
+  cursor: pointer;
+}
+
+.segmented input {
+  position: absolute;
+  opacity: 0;
+  inset: 0;
+  margin: 0;
+  cursor: pointer;
+}
+
+.segmented span {
+  display: flex;
+  flex-direction: column;
+  padding: 7px 14px;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--ink-soft);
+  transition:
+    background-color 120ms ease,
+    color 120ms ease;
+}
+
+.segmented span small {
+  font-weight: 500;
+  font-size: 12px;
+  opacity: 0.8;
+}
+
+.segmented input:checked + span {
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
+}
+
+.segmented input:focus-visible + span {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+
+.segmented input:disabled + span {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px solid var(--edge);
+  background: var(--surface);
+  color: var(--ink);
+  border-radius: 10px;
+  padding: 9px 14px;
+  font-weight: 600;
+  font-size: 14px;
+  cursor: pointer;
+  transition:
+    transform 100ms ease,
+    background-color 120ms ease;
+}
+
+.btn:hover:not(:disabled) {
+  background: var(--surface-2);
+}
+
+.btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.btn--go {
+  background: var(--south);
+  border-color: var(--sign-ink);
+  color: var(--sign-ink);
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 16px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 12px 22px;
+}
+
+.btn--go:hover:not(:disabled) {
+  background: var(--south);
+  filter: brightness(1.06);
+}
+
+.btn--quiet {
+  border-color: transparent;
+  background: transparent;
+  color: var(--ink-soft);
+}
+
+.btn[aria-pressed="true"] {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--bg);
+}
+
+.btn svg {
+  width: 18px;
+  height: 18px;
+  flex: none;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.row--between {
+  justify-content: space-between;
+}
+
+/* ---------- Menu ---------- */
+
+.menu-grid {
+  display: grid;
+  gap: 16px;
+}
+
+/* Wider screens: settings on the left, the board preview and record stacked on the right. */
+@media (min-width: 820px) {
+  .app--wide {
+    max-width: 940px;
+  }
+  .menu-grid {
+    grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+    align-items: start;
+  }
+  .setup-form {
+    grid-row: span 2;
+  }
+}
+
+.preview {
+  padding: 14px;
+  display: grid;
+  gap: 10px;
+}
+
+.preview__board {
+  width: min(100%, 260px);
+  margin: 0 auto;
+}
+
+.resume {
+  padding: 14px 16px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-left: 6px solid var(--south);
+}
+
+.record {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.record th,
+.record td {
+  text-align: left;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--edge);
+}
+
+.record td.num,
+.record th.num {
+  text-align: right;
+}
+
+.record tr:last-child td {
+  border-bottom: 0;
+}
+
+/* ---------- Game ---------- */
+
+.topbar {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 8px;
+}
+
+.topbar > .btn:first-child {
+  justify-self: start;
+}
+
+.topbar > .btn:last-child {
+  justify-self: end;
+}
+
+.topbar__title {
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+  min-width: 0;
+  text-align: center;
+}
+
+.topbar__title h1 {
+  font-size: 26px;
+  font-weight: 900;
+  letter-spacing: 0.01em;
+}
+
+.racers {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.racer {
+  position: relative;
+  overflow: hidden;
+  padding: 10px 12px 10px 16px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 2px 10px;
+  border-radius: 12px;
+  background: var(--surface);
+  border: 1px solid var(--edge);
+  min-width: 0;
+}
+
+.racer::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 6px;
+  background: var(--racer-color);
+}
+
+.racer--active {
+  box-shadow: 0 0 0 2px var(--racer-color);
+}
+
+.racer--active::after {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 4px;
+  background: repeating-linear-gradient(
+    -45deg,
+    var(--racer-color) 0 6px,
+    transparent 6px 12px
+  );
+}
+
+.racer__name {
+  font-weight: 700;
+  font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.racer__steps {
+  grid-column: 1;
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+
+.racer__steps b {
+  font-family: var(--font-mono);
+  font-size: 22px;
+  color: var(--ink);
+  margin-right: 4px;
+}
+
+.racer__walls {
+  --pip-w: 6px;
+  grid-row: 1 / span 2;
+  grid-column: 2;
+  display: grid;
+  gap: 3px;
+  justify-content: end;
+}
+
+.pip {
+  width: var(--pip-w);
+  height: 14px;
+  border-radius: 2px;
+  background: var(--surface-2);
+}
+
+.pip--full {
+  background: repeating-linear-gradient(
+    -45deg,
+    var(--racer-color) 0 3px,
+    var(--lane) 3px 5px
+  );
+}
+
+.status {
+  margin: 0;
+  min-height: 1.5em;
+  text-align: center;
+  color: var(--ink-soft);
+  font-size: 14px;
+}
+
+.status b {
+  color: var(--ink);
+}
+
+.board-wrap {
+  position: relative;
+  width: 100%;
+  max-width: 520px;
+  margin: 0 auto;
+}
+
+.board {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 1;
+  max-width: 100%;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: manipulation;
+}
+
+.board--walls {
+  cursor: crosshair;
+}
+
+.board .target {
+  cursor: pointer;
+  outline: none;
+}
+
+.board .target rect {
+  transition: fill 120ms ease;
+}
+
+.board .target:hover rect,
+.board .target:focus-visible rect {
+  fill: rgba(255, 255, 255, 0.16);
+}
+
+.board .target:focus-visible rect {
+  stroke: var(--focus);
+  stroke-width: 0.6;
+}
+
+.board .pawn {
+  transition: transform 260ms cubic-bezier(0.3, 0.7, 0.2, 1);
+}
+
+.board .wall--new {
+  animation: wall-drop 380ms cubic-bezier(0.2, 0.9, 0.3, 1.25);
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+@keyframes wall-drop {
+  from {
+    transform: scale(1.35);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.board-tip {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -26px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--ink-soft);
+  pointer-events: none;
+}
+
+/* The DETOUR sign that pops over a racer when a wall lengthens their route. */
+.detour-pop {
+  position: absolute;
+  transform: translate(-50%, -135%);
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 9px 3px;
+  border-radius: 6px;
+  border: 2px solid var(--sign-ink);
+  color: var(--sign-ink);
+  font-family: var(--font-display);
+  font-weight: 900;
+  font-size: 15px;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  animation: detour-pop 1900ms ease-out forwards;
+}
+
+.detour-pop .num {
+  font-weight: 700;
+}
+
+@keyframes detour-pop {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -80%) scale(0.6);
+  }
+  12% {
+    opacity: 1;
+    transform: translate(-50%, -140%) scale(1.08);
+  }
+  22% {
+    transform: translate(-50%, -135%) scale(1);
+  }
+  80% {
+    opacity: 1;
+    transform: translate(-50%, -150%) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -165%) scale(1);
+  }
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  padding-top: 18px;
+}
+
+.toolbar .segmented span {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+}
+
+.toolbar .segmented svg {
+  width: 18px;
+  height: 18px;
+}
+
+.rules {
+  padding: 12px 16px;
+  font-size: 14px;
+  color: var(--ink-soft);
+}
+
+.rules summary {
+  cursor: pointer;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.rules ul {
+  margin: 10px 0 2px;
+  padding-left: 20px;
+  display: grid;
+  gap: 4px;
+}
+
+.result {
+  padding: 18px;
+  display: grid;
+  gap: 14px;
+  text-align: center;
+  border-top: 6px solid var(--result-color);
+}
+
+.result h2 {
+  font-size: 28px;
+  font-weight: 900;
+}
+
+.result__stats {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 8px 28px;
+}
+
+.result__stats div {
+  display: grid;
+}
+
+.result__stats b {
+  font-family: var(--font-mono);
+  font-size: 22px;
+}
+
+.result__stats span {
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+.confirm {
+  padding: 14px 16px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+@media (max-width: 420px) {
+  .racer__walls {
+    --pip-w: 5px;
+    gap: 2px;
+  }
+  .topbar__title h1 {
+    font-size: 22px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    transition-duration: 1ms !important;
+  }
+  .sign {
+    transform: none;
+  }
+  .detour-pop {
+    animation: none;
+  }
+}
